@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import argparse
+import os
 import sys
+
+os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
+import argparse
 from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
@@ -289,8 +293,9 @@ class GStreamerCamera(QObject):
             | Gst.MessageType.STATE_CHANGED
         )
 
-        while True:
-            message = self.bus.timed_pop_filtered(0, message_types)
+        bus = self.bus
+        while bus is self.bus:
+            message = bus.timed_pop_filtered(0, message_types)
             if message is None:
                 break
 
