@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="newPrefix">
+    <file>cam-recorder.png</file>
+  </qresource>
+</RCC>
