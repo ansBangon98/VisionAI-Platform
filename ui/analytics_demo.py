@@ -5,6 +5,8 @@ from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QMainWind
 from PySide6.QtCore import QEvent, QFile
 from PySide6.QtUiTools import QUiLoader
 
+from core.camera.gstreamer import CameraConfig, attach_camera_viewer
+
 
 try:
     import assets.icons.icons_rc
@@ -43,6 +45,33 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.ui)
         self.setup_right_aligned_header_widgets()
+        self.setup_camera_feed_widget()
+
+    def setup_camera_feed_widget(self):
+        self.frm_videofeed = self.ui.findChild(QFrame, "frm_videofeed")
+        if self.frm_videofeed is None:
+            self.frm_videofeed = self.ui.findChild(QFrame, "frame_8")
+
+        if self.frm_videofeed is None:
+            return
+
+        self.camera_viewer = attach_camera_viewer(
+            self.frm_videofeed,
+            CameraConfig(source="usb", usb_device="/dev/video0"),
+            auto_start=False,
+        )
+
+    def start_usb_camera(self, usb_device: str = "/dev/video0"):
+        if hasattr(self, "camera_viewer"):
+            self.camera_viewer.start_usb(usb_device=usb_device)
+
+    def start_rtsp_camera(self, rtsp_uri: str):
+        if hasattr(self, "camera_viewer"):
+            self.camera_viewer.start_rtsp(rtsp_uri)
+
+    def stop_camera(self):
+        if hasattr(self, "camera_viewer"):
+            self.camera_viewer.stop()
 
     def setup_right_aligned_header_widgets(self):
         self.header_frame = self.ui.findChild(QFrame, "frame_3")
@@ -65,7 +94,7 @@ class MainWindow(QMainWindow):
             raise RuntimeError(f"Missing UI widgets: {', '.join(missing_widgets)}")
 
         self.live_status_container = self.lbl_liveinference_status.parentWidget()
-        self._header_right_margin = 20
+        self._header_right_margin = 5
         self._header_widget_gap = 10
         self._cbo_selected_test_y = self.cbo_selected_test.y()
         self._live_status_container_y = self.live_status_container.y()
@@ -81,6 +110,10 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.position_header_right_widgets()
+
+    def closeEvent(self, event):
+        self.stop_camera()
+        super().closeEvent(event)
 
     def position_header_right_widgets(self):
         if not hasattr(self, "header_frame"):

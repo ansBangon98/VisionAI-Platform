@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>862</width>
+    <width>1062</width>
     <height>875</height>
    </rect>
   </property>
@@ -437,102 +437,116 @@ background-color:#1e222b;</string>
               <property name="frameShadow">
                <enum>QFrame::Shadow::Raised</enum>
               </property>
-              <widget class="QFrame" name="frame_10">
-               <property name="geometry">
-                <rect>
-                 <x>0</x>
-                 <y>0</y>
-                 <width>271</width>
-                 <height>25</height>
-                </rect>
-               </property>
-               <property name="styleSheet">
-                <string notr="true">color: #9F9FA9;
-background-color:#1e222b;
-border-radius: 4px;</string>
-               </property>
-               <property name="frameShape">
-                <enum>QFrame::Shape::StyledPanel</enum>
-               </property>
-               <property name="frameShadow">
-                <enum>QFrame::Shadow::Raised</enum>
-               </property>
-               <widget class="QLabel" name="label_live_dot_2">
-                <property name="geometry">
-                 <rect>
-                  <x>8</x>
-                  <y>8</y>
-                  <width>10</width>
-                  <height>10</height>
-                 </rect>
-                </property>
-                <property name="styleSheet">
-                 <string notr="true">background-color:#eb4034;
-border-radius:5px;
-border:None;</string>
-                </property>
-                <property name="text">
-                 <string/>
-                </property>
-               </widget>
-               <widget class="QLabel" name="project_title_6">
-                <property name="geometry">
-                 <rect>
-                  <x>0</x>
-                  <y>0</y>
-                  <width>241</width>
-                  <height>25</height>
-                 </rect>
-                </property>
-                <property name="font">
-                 <font>
-                  <family>Ubuntu</family>
-                  <pointsize>9</pointsize>
-                  <bold>false</bold>
-                 </font>
-                </property>
-                <property name="styleSheet">
-                 <string notr="true">padding-left: 25px;</string>
-                </property>
-                <property name="text">
-                 <string>CAM_01 - Store entrance</string>
-                </property>
-                <property name="margin">
-                 <number>0</number>
-                </property>
-               </widget>
-               <zorder>project_title_6</zorder>
-               <zorder>label_live_dot_2</zorder>
-              </widget>
-              <widget class="QLabel" name="project_title_7">
-               <property name="geometry">
-                <rect>
-                 <x>500</x>
-                 <y>0</y>
-                 <width>231</width>
-                 <height>25</height>
-                </rect>
-               </property>
-               <property name="font">
-                <font>
-                 <family>Ubuntu</family>
-                 <pointsize>9</pointsize>
-                 <bold>false</bold>
-                </font>
-               </property>
-               <property name="styleSheet">
-                <string notr="true"/>
-               </property>
-               <property name="text">
-                <string>640×640 model input · 30fps source</string>
-               </property>
-               <property name="alignment">
-                <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignTrailing|Qt::AlignmentFlag::AlignVCenter</set>
-               </property>
-               <property name="margin">
+              <layout class="QHBoxLayout" name="horizontalLayout_13">
+               <property name="spacing">
                 <number>0</number>
                </property>
-              </widget>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QFrame" name="frame_10">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>300</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">color: #9F9FA9;
+background-color:#1e222b;
+border-radius: 4px;</string>
+                 </property>
+                 <property name="frameShape">
+                  <enum>QFrame::Shape::StyledPanel</enum>
+                 </property>
+                 <property name="frameShadow">
+                  <enum>QFrame::Shadow::Raised</enum>
+                 </property>
+                 <widget class="QLabel" name="label_live_dot_2">
+                  <property name="geometry">
+                   <rect>
+                    <x>8</x>
+                    <y>8</y>
+                    <width>10</width>
+                    <height>10</height>
+                   </rect>
+                  </property>
+                  <property name="styleSheet">
+                   <string notr="true">background-color:#eb4034;
+border-radius:5px;
+border:None;</string>
+                  </property>
+                  <property name="text">
+                   <string/>
+                  </property>
+                 </widget>
+                 <widget class="QLabel" name="project_title_6">
+                  <property name="geometry">
+                   <rect>
+                    <x>0</x>
+                    <y>0</y>
+                    <width>241</width>
+                    <height>25</height>
+                   </rect>
+                  </property>
+                  <property name="font">
+                   <font>
+                    <family>Ubuntu</family>
+                    <pointsize>9</pointsize>
+                    <bold>false</bold>
+                   </font>
+                  </property>
+                  <property name="styleSheet">
+                   <string notr="true">padding-left: 25px;</string>
+                  </property>
+                  <property name="text">
+                   <string>CAM_01 - Store entrance</string>
+                  </property>
+                  <property name="margin">
+                   <number>0</number>
+                  </property>
+                 </widget>
+                 <zorder>project_title_6</zorder>
+                 <zorder>label_live_dot_2</zorder>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="project_title_7">
+                 <property name="font">
+                  <font>
+                   <family>Ubuntu</family>
+                   <pointsize>9</pointsize>
+                   <bold>false</bold>
+                  </font>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true"/>
+                 </property>
+                 <property name="text">
+                  <string>640×640 model input · 30fps source</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignTrailing|Qt::AlignmentFlag::AlignVCenter</set>
+                 </property>
+                 <property name="margin">
+                  <number>0</number>
+                 </property>
+                </widget>
+               </item>
+              </layout>
              </widget>
             </item>
             <item>
@@ -552,7 +566,7 @@ border:None;</string>
              </widget>
             </item>
             <item>
-             <widget class="QFrame" name="frame_8">
+             <widget class="QFrame" name="frm_videofeed">
               <property name="frameShape">
                <enum>QFrame::Shape::StyledPanel</enum>
               </property>
