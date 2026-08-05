@@ -95,37 +95,89 @@ class YoloPeopleDetector:
         nms_iou_threshold: float = 0.45,
         input_size: Sequence[int] = (640, 640),
         people_class_ids: Sequence[int] = (0,),
+        class_ids: Sequence[int] | None = None,
     ):
         self.model_path = Path(model_path)
         self.confidence_threshold = float(confidence_threshold)
         self.nms_iou_threshold = float(nms_iou_threshold)
         self.input_width = int(input_size[0])
         self.input_height = int(input_size[1])
-        self.people_class_ids = {int(class_id) for class_id in people_class_ids}
+        detection_class_ids = people_class_ids if class_ids is None else class_ids
+        self.class_ids = {int(class_id) for class_id in detection_class_ids}
 
         self.backend_name = _normalize_backend_name(backend_name)
-        self.backend = create_inference_backend(
-            model_path=self.model_path,
-            backend_name=self.backend_name,
-            device=device,
-            providers=providers,
-            input_shapes=input_shapes or {},
-            input_dtypes=input_dtypes or {},
-            warmup_runs=warmup_runs,
-            dynamic_dim=dynamic_dim,
-            backend_options=backend_options or {},
-        )
-        self.backend.initialize()
+        try:
+            self.backend = create_inference_backend(
+                model_path=self.model_path,
+                backend_name=self.backend_name,
+                device=device,
+                providers=providers,
+                input_shapes=input_shapes or {},
+                input_dtypes=input_dtypes or {},
+                warmup_runs=warmup_runs,
+                dynamic_dim=dynamic_dim,
+                backend_options=backend_options or {},
+            )
+            self.backend.initialize()
+        except RuntimeError as error:
+            raise RuntimeError(
+                "Failed to initialize people detector "
+                f"backend='{self.backend_name}', model='{self.model_path}': {error}"
+            ) from error
+        except Exception as error:
+            raise RuntimeError(
+                "Failed to initialize people detector "
+                f"backend='{self.backend_name}', model='{self.model_path}': {error}"
+            ) from error
         if not self.backend.input_specs:
-            raise RuntimeError("The people detector model does not expose any inputs.")
+            raise RuntimeError(
+                "The people detector model does not expose any inputs: "
+                f"{self.model_path}"
+            )
         self.input_name = self.backend.input_specs[0].name
 
     def predict(self, frame: object) -> list[Detection]:
-        frame_height, frame_width = frame_size(frame)
-        input_tensor, scale, pad_x, pad_y = self._preprocess(frame)
-        outputs = self.backend.infer({self.input_name: input_tensor})
+        try:
+            frame_height, frame_width = frame_size(frame)
+            input_tensor, scale, pad_x, pad_y = self._preprocess(frame)
+            outputs = self.backend.infer({self.input_name: input_tensor})
+        except RuntimeError as error:
+            raise RuntimeError(
+                "People detector inference failed "
+                f"backend='{self.backend_name}', model='{self.model_path}': {error}"
+            ) from error
+        except Exception as error:
+            raise RuntimeError(
+                "People detector inference failed "
+                f"backend='{self.backend_name}', model='{self.model_path}': {error}"
+            ) from error
+
+        if not outputs:
+            raise RuntimeError(
+                "People detector inference returned no outputs "
+                f"backend='{self.backend_name}', model='{self.model_path}'."
+            )
+
         output = next(iter(outputs.values()))
-        return self._postprocess(output, scale, pad_x, pad_y, frame_width, frame_height)
+        try:
+            return self._postprocess(
+                output,
+                scale,
+                pad_x,
+                pad_y,
+                frame_width,
+                frame_height,
+            )
+        except RuntimeError as error:
+            raise RuntimeError(
+                "People detector postprocess failed "
+                f"backend='{self.backend_name}', model='{self.model_path}': {error}"
+            ) from error
+        except Exception as error:
+            raise RuntimeError(
+                "People detector postprocess failed "
+                f"backend='{self.backend_name}', model='{self.model_path}': {error}"
+            ) from error
 
     def _preprocess(self, frame: object) -> tuple[np.ndarray, float, int, int]:
         frame_height, frame_width = frame_size(frame)
@@ -170,24 +222,43 @@ class YoloPeopleDetector:
         frame_height: int,
     ) -> list[Detection]:
         predictions = np.asarray(output)
+        if predictions.size == 0:
+            raise RuntimeError("Detector output tensor is empty.")
+
         if predictions.ndim == 3:
+            if predictions.shape[0] != 1:
+                raise RuntimeError(
+                    "Detector output tensor has unsupported batch size "
+                    f"{predictions.shape[0]}; expected 1. Shape: {predictions.shape}."
+                )
             predictions = predictions[0]
         if predictions.ndim != 2:
-            return []
+            raise RuntimeError(
+                "Detector output tensor has unsupported rank "
+                f"{predictions.ndim}; expected 2 or 3. Shape: {predictions.shape}."
+            )
 
         if predictions.shape[0] < predictions.shape[1]:
             predictions = predictions.T
-        if predictions.shape[1] < 6:
-            return []
+        if predictions.shape[1] < 5:
+            raise RuntimeError(
+                "Detector output tensor has too few columns. Expected at least "
+                f"5 values per prediction (x, y, w, h, score/classes); "
+                f"got shape {predictions.shape}."
+            )
 
         boxes_xywh = predictions[:, :4]
-        class_scores = predictions[:, 4:]
-        scores = class_scores.max(axis=1)
-        class_ids = class_scores.argmax(axis=1)
+        if predictions.shape[1] == 5:
+            scores = predictions[:, 4]
+            class_ids = np.zeros_like(scores, dtype=np.int64)
+        else:
+            class_scores = predictions[:, 4:]
+            scores = class_scores.max(axis=1)
+            class_ids = class_scores.argmax(axis=1)
 
         keep = scores >= self.confidence_threshold
-        if self.people_class_ids:
-            keep = keep & np.isin(class_ids, list(self.people_class_ids))
+        if self.class_ids:
+            keep = keep & np.isin(class_ids, list(self.class_ids))
 
         if not np.any(keep):
             return []
@@ -210,7 +281,7 @@ class YoloPeopleDetector:
         scores = scores[valid]
         class_ids = class_ids[valid]
 
-        selected = _nms(boxes, scores, self.nms_iou_threshold)
+        selected = _nms_by_class(boxes, scores, class_ids, self.nms_iou_threshold)
         return [
             Detection(
                 bbox=tuple(float(value) for value in boxes[index]),
@@ -391,6 +462,8 @@ def _detector_backend_options(config: dict[str, Any]) -> dict[str, Any]:
         "input_size",
         "model",
         "nms_iou_threshold",
+        "detect_class_ids",
+        "face_class_ids",
         "people_class_ids",
         "provider",
         "providers",
@@ -463,21 +536,58 @@ class PeopleAnalyticsPipeline:
         self,
         detector: YoloPeopleDetector,
         tracker: ByteTrackPeopleTracker,
+        people_class_ids: Sequence[int] = (0,),
+        face_class_ids: Sequence[int] = (1,),
+        class_labels: dict[int, str] | None = None,
     ):
         self.detector = detector
         self.tracker = tracker
+        people_class_id_values = [int(class_id) for class_id in people_class_ids]
+        self.people_class_ids = set(people_class_id_values)
+        self.person_class_id = people_class_id_values[0] if people_class_id_values else 0
+        self.face_class_ids = {int(class_id) for class_id in face_class_ids}
+        self.class_labels = class_labels or {0: "person", 1: "face"}
 
     def process(self, frame: object) -> list[dict[str, object]]:
         detections = self.detector.predict(frame)
-        tracks = self.tracker.update(detections, frame_size(frame))
+        frame_height, frame_width = frame_size(frame)
+        people_detections = [
+            detection
+            for detection in detections
+            if detection.class_id in self.people_class_ids
+        ]
+        face_detections = [
+            detection
+            for detection in detections
+            if detection.class_id in self.face_class_ids
+        ]
+        tracks = self.tracker.update(people_detections, (frame_height, frame_width))
 
-        return [
+        results = [
             {
+                "type": "person",
+                "label": self._class_label(self.person_class_id),
+                "class_id": self.person_class_id,
                 "track_id": track.track_id,
                 "bbox": track.bbox,
             }
             for track in tracks
         ]
+        results.extend(
+            {
+                "type": "face",
+                "label": self._class_label(detection.class_id),
+                "class_id": detection.class_id,
+                "track_id": None,
+                "bbox": _clip_bbox(detection.bbox, frame_width, frame_height),
+                "score": detection.score,
+            }
+            for detection in face_detections
+        )
+        return results
+
+    def _class_label(self, class_id: int) -> str:
+        return self.class_labels.get(int(class_id), f"class_{class_id}")
 
 
 def create_pipeline_from_config(
@@ -486,6 +596,19 @@ def create_pipeline_from_config(
     config = load_config(config_path)
     detector_config = config.get("detector", {})
     tracker_config = config.get("tracker", {})
+
+    if not isinstance(detector_config, dict):
+        raise RuntimeError(f"Invalid detector config in {config_path}.")
+    if not detector_config.get("model"):
+        raise RuntimeError(f"Missing detector.model in {config_path}.")
+    if not isinstance(tracker_config, dict):
+        raise RuntimeError(f"Invalid tracker config in {config_path}.")
+
+    people_class_ids = _as_int_sequence(detector_config.get("people_class_ids", (0,)))
+    face_class_ids = _as_int_sequence(detector_config.get("face_class_ids", (1,)))
+    detect_class_ids = _as_optional_int_sequence(detector_config.get("detect_class_ids"))
+    if detect_class_ids is None:
+        detect_class_ids = tuple(dict.fromkeys((*people_class_ids, *face_class_ids)))
 
     model_path = _resolve_project_path(detector_config["model"])
     detector = YoloPeopleDetector(
@@ -503,7 +626,8 @@ def create_pipeline_from_config(
         confidence_threshold=detector_config.get("confidence_threshold", 0.4),
         nms_iou_threshold=detector_config.get("nms_iou_threshold", 0.45),
         input_size=detector_config.get("input_size", (640, 640)),
-        people_class_ids=detector_config.get("people_class_ids", (0,)),
+        people_class_ids=people_class_ids,
+        class_ids=detect_class_ids,
     )
     tracker = ByteTrackPeopleTracker(
         track_thresh=tracker_config.get("track_thresh", 0.5),
@@ -511,7 +635,13 @@ def create_pipeline_from_config(
         track_buffer=tracker_config.get("track_buffer", 30),
         frame_rate=tracker_config.get("frame_rate", 30),
     )
-    return PeopleAnalyticsPipeline(detector=detector, tracker=tracker)
+    return PeopleAnalyticsPipeline(
+        detector=detector,
+        tracker=tracker,
+        people_class_ids=people_class_ids,
+        face_class_ids=face_class_ids,
+        class_labels=load_class_labels(model_path),
+    )
 
 
 def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
@@ -637,6 +767,21 @@ def _nms(boxes: np.ndarray, scores: np.ndarray, threshold: float) -> list[int]:
     return keep
 
 
+def _nms_by_class(
+    boxes: np.ndarray,
+    scores: np.ndarray,
+    class_ids: np.ndarray,
+    threshold: float,
+) -> list[int]:
+    selected: list[int] = []
+    for class_id in np.unique(class_ids):
+        class_indexes = np.where(class_ids == class_id)[0]
+        kept_indexes = _nms(boxes[class_indexes], scores[class_indexes], threshold)
+        selected.extend(int(class_indexes[index]) for index in kept_indexes)
+
+    return sorted(selected, key=lambda index: float(scores[index]), reverse=True)
+
+
 def _box_iou(box: np.ndarray, boxes: np.ndarray) -> np.ndarray:
     x1 = np.maximum(box[0], boxes[:, 0])
     y1 = np.maximum(box[1], boxes[:, 1])
@@ -672,3 +817,37 @@ def _resolve_project_path(path: str | Path) -> Path:
     if resolved.is_absolute():
         return resolved
     return PROJECT_ROOT / resolved
+
+
+def _as_int_sequence(value: object) -> tuple[int, ...]:
+    if value in (None, ""):
+        return ()
+
+    if isinstance(value, str):
+        return tuple(
+            int(part.strip()) for part in value.split(",") if part.strip()
+        )
+
+    if isinstance(value, Sequence):
+        return tuple(int(part) for part in value)
+
+    return (int(value),)
+
+
+def _as_optional_int_sequence(value: object) -> tuple[int, ...] | None:
+    if value in (None, ""):
+        return None
+    return _as_int_sequence(value)
+
+
+def load_class_labels(model_path: str | Path) -> dict[int, str]:
+    labels_path = Path(model_path).with_name("labels.txt")
+    if not labels_path.exists():
+        return {0: "person", 1: "face"}
+
+    labels = {}
+    for index, raw_label in enumerate(labels_path.read_text(encoding="utf-8").splitlines()):
+        label = raw_label.strip()
+        if label:
+            labels[index] = label
+    return labels or {0: "person", 1: "face"}

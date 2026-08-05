@@ -6,13 +6,24 @@ from typing import Any
 
 def load_yaml_config(config_path: str | Path) -> dict[str, Any]:
     path = Path(config_path)
+    if not path.exists():
+        raise RuntimeError(f"Config file does not exist: {path}")
+    if not path.is_file():
+        raise RuntimeError(f"Config path is not a file: {path}")
+
     try:
         import yaml
     except ImportError:
         return _load_simple_yaml(path)
 
-    with path.open("r", encoding="utf-8") as config_file:
-        data = yaml.safe_load(config_file) or {}
+    try:
+        with path.open("r", encoding="utf-8") as config_file:
+            data = yaml.safe_load(config_file) or {}
+    except RuntimeError:
+        raise
+    except Exception as error:
+        raise RuntimeError(f"Failed to load YAML config {path}: {error}") from error
+
     if not isinstance(data, dict):
         raise RuntimeError(f"Invalid config: {path}")
     return data

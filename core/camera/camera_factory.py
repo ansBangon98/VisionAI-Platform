@@ -9,6 +9,10 @@ from core.camera.video_file import VideoFileCamera
 class CameraFactory:
     @staticmethod
     def create(config: dict) -> BaseCamera:
+        if "type" not in config:
+            name = str(config.get("name", "camera"))
+            raise RuntimeError(f"Camera source '{name}' is missing required field: type")
+
         source_type = str(config["type"]).lower()
         name = str(config.get("name", "camera"))
         label = str(config.get("label", _title_from_key(name)))
@@ -48,7 +52,7 @@ class CameraFactory:
                 reconnect=reconnect,
             )
 
-        raise ValueError(f"Unsupported camera type: {source_type}")
+        raise RuntimeError(f"Unsupported camera type: {source_type}")
 
 
 def _title_from_key(key: str) -> str:

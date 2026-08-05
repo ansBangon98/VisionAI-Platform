@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -76,6 +76,7 @@ class CameraFeedLabel(QLabel):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._image = QImage()
+        self._overlays: list[object] = []
         self.setObjectName("camera_feed")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(1, 1)
@@ -93,8 +94,17 @@ class CameraFeedLabel(QLabel):
         self._image = image
         self._paint_image()
 
+    def set_overlays(self, overlays: list[object] | tuple[object, ...] | None):
+        self._overlays = list(overlays or [])
+        self._paint_image()
+
+    def clear_overlays(self):
+        self._overlays = []
+        self._paint_image()
+
     def clear_feed(self, message: str):
         self._image = QImage()
+        self._overlays = []
         self.clear()
         self.setText(message)
 
@@ -106,12 +116,83 @@ class CameraFeedLabel(QLabel):
         if self._image.isNull():
             return
 
-        pixmap = QPixmap.fromImage(self._image).scaled(
+        image = self._image
+        if self._overlays:
+            image = self._image.copy()
+            self._draw_overlays(image)
+
+        pixmap = QPixmap.fromImage(image).scaled(
             self.size(),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
         self.setPixmap(pixmap)
+
+    def _draw_overlays(self, image: QImage):
+        painter = QPainter(image)
+        try:
+            pen_width = max(2, min(image.width(), image.height()) // 240)
+            for overlay in self._overlays:
+                bbox = _overlay_bbox(overlay, image.width(), image.height())
+                if bbox is None:
+                    continue
+
+                x1, y1, x2, y2 = bbox
+                pen = QPen(_overlay_color(overlay))
+                pen.setWidth(pen_width)
+                painter.setPen(pen)
+                painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+        finally:
+            painter.end()
+
+
+def _overlay_bbox(
+    overlay: object,
+    image_width: int,
+    image_height: int,
+) -> tuple[int, int, int, int] | None:
+    bbox = _overlay_value(overlay, "bbox")
+    if bbox is None:
+        return None
+
+    try:
+        x1, y1, x2, y2 = [float(value) for value in bbox[:4]]
+    except (TypeError, ValueError):
+        return None
+
+    x1 = _clamp_int(x1, 0, image_width)
+    y1 = _clamp_int(y1, 0, image_height)
+    x2 = _clamp_int(x2, 0, image_width)
+    y2 = _clamp_int(y2, 0, image_height)
+
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
+
+
+def _overlay_color(overlay: object) -> QColor:
+    item_type = str(
+        _overlay_value(overlay, "type")
+        or _overlay_value(overlay, "label")
+        or ""
+    ).lower()
+    class_id = _overlay_value(overlay, "class_id")
+
+    if item_type in {"person", "people"} or class_id == 0:
+        return QColor("#7DD3FC")
+    if item_type == "face" or class_id == 1:
+        return QColor("#86EFAC")
+    return QColor("#FDE68A")
+
+
+def _overlay_value(overlay: object, key: str):
+    if isinstance(overlay, dict):
+        return overlay.get(key)
+    return getattr(overlay, key, None)
+
+
+def _clamp_int(value: float, minimum: int, maximum: int) -> int:
+    return int(round(max(minimum, min(float(value), maximum))))
 
 
 class GStreamerCamera(QObject):

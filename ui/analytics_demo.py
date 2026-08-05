@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+import traceback
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication,
@@ -37,13 +38,14 @@ def resource_path(relative: str) -> str:
 
 class AnalyticsWorker(QObject):
     results_ready = Signal(object, object)
-    error_occurred = Signal(str)
+    error_occurred = Signal(str, str)
     processing_finished = Signal()
 
-    def __init__(self, pipeline, analytics):
+    def __init__(self, pipeline, analytics, app_name: str):
         super().__init__()
         self.pipeline = pipeline
         self.analytics = analytics
+        self.app_name = app_name
 
     @Slot(QImage)
     def process_frame(self, frame: QImage):
@@ -51,8 +53,13 @@ class AnalyticsWorker(QObject):
             results = self.pipeline.process(frame)
             summary = self.analytics.update(results)
             self.results_ready.emit(results, summary)
+        except RuntimeError as error:
+            self.error_occurred.emit(str(error), traceback.format_exc())
         except Exception as error:
-            self.error_occurred.emit(str(error))
+            runtime_error = RuntimeError(
+                f"{self.app_name} analytics failed: {error}"
+            )
+            self.error_occurred.emit(str(runtime_error), traceback.format_exc())
         finally:
             self.processing_finished.emit()
 
@@ -152,9 +159,7 @@ class MainWindow(QMainWindow):
         )
         self.camera_viewer.metrics_changed.connect(self.update_performance_metrics)
         self.camera_viewer.frame_ready.connect(self.queue_analytics_frame)
-        self.camera_viewer.error_occurred.connect(
-            lambda _message: self.reset_performance_metrics()
-        )
+        self.camera_viewer.error_occurred.connect(self.handle_camera_error)
 
     def start_selected_camera_source(self):
         if not hasattr(self, "camera_viewer"):
@@ -170,6 +175,11 @@ class MainWindow(QMainWindow):
         try:
             camera_config = self.camera_registry.get(source_key)
             camera = CameraFactory.create(camera_config)
+        except RuntimeError as error:
+            self.show_runtime_error("Camera Config Error", str(error))
+            return
+
+        try:
             self.camera_viewer.start(camera.to_camera_config())
             self.selected_camera_source = source_key
         except RuntimeError as error:
@@ -187,6 +197,7 @@ class MainWindow(QMainWindow):
 
     def stop_camera(self):
         if hasattr(self, "camera_viewer"):
+            self.clear_video_overlays()
             self.camera_viewer.stop()
         self.reset_performance_metrics()
 
@@ -277,6 +288,7 @@ class MainWindow(QMainWindow):
         self.stop_camera()
         self.selected_app = None
         self.lbl_Objects.setText("0")
+        self.clear_video_overlays()
 
         if not app_key:
             self.set_live_inference_status("Select App", is_live=False)
@@ -296,11 +308,29 @@ class MainWindow(QMainWindow):
             pipeline, analytics = self.create_app_runtime(app)
         except Exception as error:
             self.lbl_Objects.setText("--")
-            self.set_live_inference_status(str(error), is_live=False)
+            message = self.runtime_error_message(
+                error,
+                f"{app.name} failed to start",
+            )
+            self.show_runtime_error(
+                f"{app.name} Error",
+                message,
+                traceback.format_exc(),
+            )
+            return
+
+        try:
+            self.select_app_default_camera(app)
+        except RuntimeError as error:
+            self.lbl_Objects.setText("--")
+            self.show_runtime_error(
+                "Camera Source Error",
+                str(error),
+                traceback.format_exc(),
+            )
             return
 
         self.start_analytics_worker(pipeline, analytics)
-        self.select_app_default_camera(app)
         self.start_selected_camera_source()
 
     @Slot(int)
@@ -314,8 +344,13 @@ class MainWindow(QMainWindow):
 
     def select_app_default_camera(self, app: AppDefinition):
         source_name = app.config.get("source", {}).get("name")
-        if source_name not in self.camera_source_by_key:
+        if not source_name:
             return
+        if source_name not in self.camera_source_by_key:
+            raise RuntimeError(
+                f"{app.name} uses camera source '{source_name}', but it is not "
+                "defined in configs/cameras.yaml."
+            )
 
         index = self.cbo_camera_source.findData(source_name)
         if index < 0:
@@ -331,13 +366,29 @@ class MainWindow(QMainWindow):
         return "" if value is None else str(value)
 
     def create_app_runtime(self, app: AppDefinition):
-        pipeline_module = importlib.import_module(f"apps.{app.key}.pipeline")
+        try:
+            pipeline_module = importlib.import_module(f"apps.{app.key}.pipeline")
+        except RuntimeError:
+            raise
+        except Exception as error:
+            raise RuntimeError(
+                f"Failed to import {app.name} pipeline: {error}"
+            ) from error
+
         create_pipeline = getattr(pipeline_module, "create_pipeline_from_config", None)
         if create_pipeline is None:
             raise RuntimeError(f"{app.name} has no pipeline factory.")
 
-        pipeline = create_pipeline(app.config_path)
-        analytics = self.create_app_analytics(app)
+        try:
+            pipeline = create_pipeline(app.config_path)
+            analytics = self.create_app_analytics(app)
+        except RuntimeError:
+            raise
+        except Exception as error:
+            raise RuntimeError(
+                f"Failed to initialize {app.name}: {error}"
+            ) from error
+
         return pipeline, analytics
 
     def create_app_analytics(self, app: AppDefinition):
@@ -366,6 +417,7 @@ class MainWindow(QMainWindow):
         self._analytics_worker = AnalyticsWorker(
             pipeline,
             analytics,
+            self.selected_app.name if self.selected_app else "Selected app",
         )
         self._analytics_thread = QThread(self)
         self._analytics_worker.moveToThread(self._analytics_thread)
@@ -400,12 +452,20 @@ class MainWindow(QMainWindow):
         if current_count is None:
             current_count = summary.get("current_objects", len(results or []))
         self.lbl_Objects.setText(str(int(current_count)))
+        self.update_video_overlays(results)
 
-    @Slot(str)
-    def handle_analytics_error(self, message: str):
+    @Slot(str, str)
+    def handle_analytics_error(self, message: str, details: str = ""):
         self._analytics_enabled = False
         self.lbl_Objects.setText("--")
-        self.set_live_inference_status(message, is_live=False)
+        self.clear_video_overlays()
+        self.show_runtime_error("Analytics Error", message, details)
+
+    @Slot(str)
+    def handle_camera_error(self, message: str):
+        self.reset_performance_metrics()
+        self.clear_video_overlays()
+        self.show_runtime_error("Camera Error", message)
 
     @Slot()
     def mark_analytics_idle(self):
@@ -424,6 +484,45 @@ class MainWindow(QMainWindow):
         self.lbl_dotlive_indication.setStyleSheet(
             f"border-radius: 5px; background-color: {dot_color};"
         )
+
+    def show_runtime_error(
+        self,
+        title: str,
+        message: str,
+        details: str = "",
+    ):
+        self.set_live_inference_status(message, is_live=False)
+
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Critical)
+        dialog.setWindowTitle(title)
+        dialog.setText(message)
+        if details:
+            dialog.setDetailedText(details)
+        dialog.exec()
+
+    def runtime_error_message(self, error: Exception, fallback: str) -> str:
+        if isinstance(error, RuntimeError) and str(error):
+            return str(error)
+        if str(error):
+            return f"{fallback}: {error}"
+        return fallback
+
+    def update_video_overlays(self, results):
+        if not hasattr(self, "camera_viewer"):
+            return
+        camera_feed = getattr(self.camera_viewer, "camera_feed", None)
+        if camera_feed is None or not hasattr(camera_feed, "set_overlays"):
+            return
+        camera_feed.set_overlays(results)
+
+    def clear_video_overlays(self):
+        if not hasattr(self, "camera_viewer"):
+            return
+        camera_feed = getattr(self.camera_viewer, "camera_feed", None)
+        if camera_feed is None or not hasattr(camera_feed, "clear_overlays"):
+            return
+        camera_feed.clear_overlays()
 
     def setup_right_aligned_header_widgets(self):
         self.header_frame = self.ui.findChild(QFrame, "frame_3")

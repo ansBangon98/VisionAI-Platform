@@ -1,16 +1,16 @@
 sources:
-  office_entrance:
-    label: Office Entrance
+  office_pantry:
+    label: Office Pantry
     type: rtsp
-    uri_env: CAMERA_OFFICE_ENTRANCE_RTSP
+    uri_env: CAMERA_OFFICE_PANTRY_RTSP
     latency: 300
     protocol: tcp
     reconnect: true
 
-  parking_area:
-    label: Parking Area
+  office_activity_area:
+    label: Office Activity Area
     type: rtsp
-    uri_env: CAMERA_PARKING_RTSP
+    uri_env: CAMERA_OFFICE_ACTIVITY_AREA_RTSP
     latency: 500
     protocol: tcp
     reconnect: true

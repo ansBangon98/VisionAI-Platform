@@ -70,10 +70,18 @@ class CameraRegistry:
     def _resolve_sensitive_values(self, config: dict[str, Any]) -> dict[str, Any]:
         uri_env = config.get("uri_env")
         if uri_env and not config.get("uri"):
-            value = os.environ.get(str(uri_env), self._env.get(str(uri_env), ""))
+            uri_env_name = str(uri_env)
+            if "://" in uri_env_name:
+                raise RuntimeError(
+                    f"Camera source '{config['name']}' has a URL in uri_env. "
+                    "Use uri_env for the environment variable name only, then put "
+                    "the real RTSP URL in .env."
+                )
+
+            value = os.environ.get(uri_env_name, self._env.get(uri_env_name, ""))
             if not value:
                 raise RuntimeError(
-                    f"Camera source '{config['name']}' requires env var {uri_env}. "
+                    f"Camera source '{config['name']}' requires env var {uri_env_name}. "
                     "Add it to .env or export it in the shell."
                 )
             config["uri"] = value
