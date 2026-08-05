@@ -105,6 +105,129 @@ python -m pip install -r requirements.txt
 
 Use `python -m pip` instead of plain `pip` so packages are installed into the currently active Python environment.
 
+## ONNX Runtime Installation
+
+Install only one ONNX Runtime package for your target machine. For CPU-only inference, use the standard `onnxruntime` package instead of a GPU package.
+
+Platform tabs: [README](#vision-analytics) | [CPU only](#cpu-only) | [x86_64 GPU](#x86_64-gpu) | [ARM64/aarch64 Jetson](#arm64-aarch64-jetson)
+
+| Target | Use when | Package |
+| --- | --- | --- |
+| CPU only | No GPU acceleration is needed | `onnxruntime` |
+| x86_64 GPU | Ubuntu/Debian x86_64 or Windows x64 with an NVIDIA GPU and compatible driver | `onnxruntime-gpu` |
+| ARM64/aarch64 Jetson | Jetson Nano, Xavier, or Orin with JetPack 6.x and Python 3.10 | ARM64 wheel |
+
+### CPU Only
+
+Use this for CPU inference on a machine that does not need GPU acceleration:
+
+```bash
+python -m pip install onnxruntime
+```
+
+If your virtual environment is active, this is equivalent to:
+
+```bash
+pip install onnxruntime
+```
+
+Verify the install:
+
+```bash
+python -c "import onnxruntime as ort; print('Version:', ort.__version__); print('Providers:', ort.get_available_providers())"
+```
+
+Expected providers:
+
+```text
+['CPUExecutionProvider']
+```
+
+### x86_64 GPU
+
+Use this on x86_64 Linux or Windows x64 systems with a compatible NVIDIA GPU, NVIDIA driver, and CUDA runtime support:
+
+```bash
+python -m pip install onnxruntime-gpu
+```
+
+Verify the install:
+
+```bash
+python -c "import onnxruntime as ort; print('Version:', ort.__version__); print('Providers:', ort.get_available_providers())"
+```
+
+Expected providers include:
+
+```text
+CUDAExecutionProvider
+CPUExecutionProvider
+```
+
+If TensorRT is installed and supported by the installed ONNX Runtime build, the providers may also include:
+
+```text
+TensorrtExecutionProvider
+CUDAExecutionProvider
+CPUExecutionProvider
+```
+
+### ARM64 aarch64 Jetson
+
+For Jetson boards, the standard PyPI `onnxruntime-gpu` package does not provide Jetson aarch64 binaries. Use a prebuilt ARM64 wheel that matches your JetPack and Python version.
+
+Check the environment first:
+
+```bash
+python3 --version
+uname -m
+cat /etc/nv_tegra_release
+dpkg-query --show nvidia-l4t-core
+```
+
+Expected values for this guide:
+
+```text
+Python 3.10.12
+aarch64
+JetPack 6.x / L4T 36.x
+```
+
+For JetPack 6.x with Python 3.10, install the ARM64 GPU wheel directly:
+
+```bash
+python -m pip install https://github.com/ultralytics/assets/releases/download/v0.0.0/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl
+```
+
+If you prefer to download the wheel first:
+
+```bash
+wget https://github.com/ultralytics/assets/releases/download/v0.0.0/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl
+python -m pip install onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl
+```
+
+If you encounter NumPy compatibility issues, install NumPy below `2.0`:
+
+```bash
+python -m pip install "numpy<2"
+```
+
+Verify the install:
+
+```bash
+python -c "import onnxruntime as ort; print('Version:', ort.__version__); print('Providers:', ort.get_available_providers())"
+```
+
+Expected providers usually include:
+
+```text
+TensorrtExecutionProvider
+CUDAExecutionProvider
+CPUExecutionProvider
+```
+
+If the output only shows `CPUExecutionProvider`, the GPU-enabled Jetson build is not installed or not loading correctly.
+
 ## Verify GStreamer
 
 Confirm that `gi` is loaded from the project virtual environment:

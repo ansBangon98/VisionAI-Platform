@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
 import argparse
+from collections import deque
 from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
@@ -60,6 +62,14 @@ class CameraConfig:
     rtsp_transport: str = "tcp"
 
 
+@dataclass(frozen=True)
+class CameraMetrics:
+    fps: float
+    latency_ms: float | None
+    width: int
+    height: int
+
+
 class CameraFeedLabel(QLabel):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -104,6 +114,7 @@ class CameraFeedLabel(QLabel):
 
 class GStreamerCamera(QObject):
     frame_ready = Signal(QImage)
+    metrics_changed = Signal(object)
     status_changed = Signal(str)
     error_occurred = Signal(str)
 
@@ -113,6 +124,7 @@ class GStreamerCamera(QObject):
         self.pipeline = None
         self.appsink = None
         self.bus = None
+        self._frame_times: deque[float] = deque(maxlen=30)
 
         self.bus_timer = QTimer(self)
         self.bus_timer.setInterval(100)
@@ -120,6 +132,7 @@ class GStreamerCamera(QObject):
 
     def start(self):
         self.stop(emit_status=False)
+        self._reset_metrics()
         self._ensure_gstreamer()
 
         if self.config.source == "rtsp":
@@ -151,6 +164,9 @@ class GStreamerCamera(QObject):
 
         if emit_status:
             self.status_changed.emit("Camera stopped")
+
+    def _reset_metrics(self):
+        self._frame_times.clear()
 
     def _ensure_gstreamer(self):
         if Gst is None:
@@ -253,6 +269,7 @@ class GStreamerCamera(QObject):
         )
 
     def _on_new_sample(self, sink):
+        sample_started_at = time.perf_counter()
         sample = sink.emit("pull-sample")
         if sample is None:
             return Gst.FlowReturn.ERROR
@@ -277,10 +294,51 @@ class GStreamerCamera(QObject):
                 QImage.Format.Format_RGB888,
             ).copy()
             self.frame_ready.emit(image)
+            self._emit_metrics(buffer, width, height, sample_started_at)
         finally:
             buffer.unmap(map_info)
 
         return Gst.FlowReturn.OK
+
+    def _emit_metrics(self, buffer, width: int, height: int, sample_started_at: float):
+        self._frame_times.append(time.perf_counter())
+
+        fps = 0.0
+        if len(self._frame_times) >= 2:
+            elapsed = self._frame_times[-1] - self._frame_times[0]
+            if elapsed > 0:
+                fps = (len(self._frame_times) - 1) / elapsed
+
+        latency_ms = self._buffer_latency_ms(buffer)
+        if latency_ms is None:
+            latency_ms = (time.perf_counter() - sample_started_at) * 1000
+
+        self.metrics_changed.emit(
+            CameraMetrics(
+                fps=fps,
+                latency_ms=latency_ms,
+                width=int(width),
+                height=int(height),
+            )
+        )
+
+    def _buffer_latency_ms(self, buffer) -> float | None:
+        if self.pipeline is None:
+            return None
+
+        timestamp = buffer.pts
+        if timestamp == Gst.CLOCK_TIME_NONE:
+            timestamp = buffer.dts
+
+        if timestamp == Gst.CLOCK_TIME_NONE:
+            return None
+
+        clock = self.pipeline.get_clock()
+        if clock is None:
+            return None
+
+        running_time = clock.get_time() - self.pipeline.get_base_time()
+        return max(0.0, (running_time - timestamp) / Gst.MSECOND)
 
     def _poll_bus(self):
         if self.bus is None:
@@ -328,6 +386,7 @@ class GStreamerCamera(QObject):
 
 
 class CameraViewerWidget(QWidget):
+    metrics_changed = Signal(object)
     status_changed = Signal(str)
     error_occurred = Signal(str)
 
@@ -397,6 +456,7 @@ class CameraViewerWidget(QWidget):
             self.stop(clear_feed=False)
             self.camera = GStreamerCamera(self.config, self)
             self.camera.frame_ready.connect(self.camera_feed.set_image)
+            self.camera.metrics_changed.connect(self.metrics_changed.emit)
             self.camera.status_changed.connect(self.status_changed.emit)
             self.camera.error_occurred.connect(self._handle_error)
             self.camera.start()

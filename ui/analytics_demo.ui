@@ -442,7 +442,7 @@ background-color:#1e222b;</string>
                 <number>0</number>
                </property>
                <property name="leftMargin">
-                <number>0</number>
+                <number>15</number>
                </property>
                <property name="topMargin">
                 <number>0</number>
@@ -475,50 +475,67 @@ border-radius: 4px;</string>
                  <property name="frameShadow">
                   <enum>QFrame::Shadow::Raised</enum>
                  </property>
-                 <widget class="QLabel" name="label_live_dot_2">
-                  <property name="geometry">
-                   <rect>
-                    <x>8</x>
-                    <y>8</y>
-                    <width>10</width>
-                    <height>10</height>
-                   </rect>
-                  </property>
-                  <property name="styleSheet">
-                   <string notr="true">background-color:#eb4034;
-border-radius:5px;
-border:None;</string>
-                  </property>
-                  <property name="text">
-                   <string/>
-                  </property>
-                 </widget>
-                 <widget class="QLabel" name="project_title_6">
-                  <property name="geometry">
-                   <rect>
-                    <x>0</x>
-                    <y>0</y>
-                    <width>241</width>
-                    <height>25</height>
-                   </rect>
-                  </property>
-                  <property name="font">
-                   <font>
-                    <family>Ubuntu</family>
-                    <pointsize>9</pointsize>
-                    <bold>false</bold>
-                   </font>
-                  </property>
-                  <property name="styleSheet">
-                   <string notr="true">padding-left: 25px;</string>
-                  </property>
-                  <property name="text">
-                   <string>CAM_01 - Store entrance</string>
-                  </property>
-                  <property name="margin">
+                 <layout class="QHBoxLayout" name="horizontalLayout_14">
+                  <property name="spacing">
                    <number>0</number>
                   </property>
-                 </widget>
+                  <property name="leftMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="topMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="rightMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="bottomMargin">
+                   <number>0</number>
+                  </property>
+                  <item>
+                   <widget class="QLabel" name="label_live_dot_2">
+                    <property name="minimumSize">
+                     <size>
+                      <width>10</width>
+                      <height>10</height>
+                     </size>
+                    </property>
+                    <property name="maximumSize">
+                     <size>
+                      <width>10</width>
+                      <height>10</height>
+                     </size>
+                    </property>
+                    <property name="styleSheet">
+                     <string notr="true">background-color:#eb4034;
+border-radius:5px;
+border:None;</string>
+                    </property>
+                    <property name="text">
+                     <string/>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="project_title_6">
+                    <property name="font">
+                     <font>
+                      <family>Ubuntu</family>
+                      <pointsize>9</pointsize>
+                      <bold>false</bold>
+                     </font>
+                    </property>
+                    <property name="styleSheet">
+                     <string notr="true">padding-left: 5px;</string>
+                    </property>
+                    <property name="text">
+                     <string>CAM_01 - Store entrance</string>
+                    </property>
+                    <property name="margin">
+                     <number>0</number>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
                  <zorder>project_title_6</zorder>
                  <zorder>label_live_dot_2</zorder>
                 </widget>
@@ -738,7 +755,7 @@ border:None;</string>
                       </widget>
                      </item>
                      <item>
-                      <widget class="QLabel" name="project_title_21">
+                      <widget class="QLabel" name="lbl_FPS">
                        <property name="maximumSize">
                         <size>
                          <width>40</width>
@@ -891,7 +908,7 @@ border:None;</string>
                       </widget>
                      </item>
                      <item>
-                      <widget class="QLabel" name="project_title_30">
+                      <widget class="QLabel" name="lbl_Latency">
                        <property name="maximumSize">
                         <size>
                          <width>40</width>
@@ -1044,7 +1061,7 @@ border:None;</string>
                       </widget>
                      </item>
                      <item>
-                      <widget class="QLabel" name="project_title_34">
+                      <widget class="QLabel" name="lbl_Objects">
                        <property name="maximumSize">
                         <size>
                          <width>40</width>
@@ -1197,7 +1214,7 @@ border:None;</string>
                       </widget>
                      </item>
                      <item>
-                      <widget class="QLabel" name="project_title_32">
+                      <widget class="QLabel" name="lbl_Resolution">
                        <property name="maximumSize">
                         <size>
                          <width>40</width>
@@ -2778,7 +2795,7 @@ padding-left:5px;</string>
  <resources>
   <include location="../../CaltonPath-recorder/assets/ui/icons.qrc"/>
   <include location="../assets/icons/icons.qrc"/>
-  <include location="../../../../.designer/backup/assets/icons/icons.qrc"/>
+  <include location="../assets/icons/icons.qrc"/>
  </resources>
  <connections/>
 </ui>
