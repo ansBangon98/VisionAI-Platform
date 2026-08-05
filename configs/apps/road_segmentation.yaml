@@ -1,0 +1,14 @@
+application:
+  name: Road Segmentation
+  enabled: false
+
+source:
+  name: parking_area
+
+segmenter:
+  model: core/models/segmentation/road_segmentation.onnx
+  backend: onnxruntime
+  device: auto
+  providers: []
+  input_size: [640, 640]
+  input_shape: [1, 3, 640, 640]

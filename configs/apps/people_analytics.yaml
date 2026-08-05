@@ -1,0 +1,32 @@
+application:
+  name: People Analytics
+
+source:
+  name: office_entrance
+
+detector:
+  model: core/models/detection/yolo11n_people_face_cctv_v3.onnx
+  backend: onnxruntime
+  # Supported backend values: onnxruntime, openvino, pytorch, tensorrt.
+  # TensorRT uses a serialized engine file such as .engine, not the .onnx file.
+  device: auto
+  providers: []
+  confidence_threshold: 0.4
+  nms_iou_threshold: 0.45
+  input_size: [640, 640]
+  input_shape: [1, 3, 640, 640]
+  people_class_ids: [0]
+
+tracker:
+  type: bytetrack
+  track_thresh: 0.5
+  match_thresh: 0.8
+  track_buffer: 30
+  frame_rate: 30
+
+classifiers:
+  gender:
+    enabled: false
+
+  emotion:
+    enabled: false

@@ -1,0 +1,34 @@
+sources:
+  office_entrance:
+    label: Office Entrance
+    type: rtsp
+    uri_env: CAMERA_OFFICE_ENTRANCE_RTSP
+    latency: 300
+    protocol: tcp
+    reconnect: true
+
+  parking_area:
+    label: Parking Area
+    type: rtsp
+    uri_env: CAMERA_PARKING_RTSP
+    latency: 500
+    protocol: tcp
+    reconnect: true
+
+  usb_camera_0:
+    label: USB Camera 0
+    type: usb
+    device: 0
+    width: 1280
+    height: 720
+    fps: 30
+    usb_format: raw
+
+  usb_camera_1:
+    label: USB Camera 1
+    type: usb
+    device: 1
+    width: 1920
+    height: 1080
+    fps: 30
+    usb_format: raw

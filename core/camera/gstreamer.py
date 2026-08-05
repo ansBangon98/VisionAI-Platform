@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 import argparse
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
@@ -60,6 +61,7 @@ class CameraConfig:
     usb_format: str = "raw"
     rtsp_latency: int = 200
     rtsp_transport: str = "tcp"
+    file_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -139,6 +141,8 @@ class GStreamerCamera(QObject):
             self.pipeline = self._build_rtsp_pipeline()
         elif self.config.source == "usb":
             self.pipeline = self._build_usb_pipeline()
+        elif self.config.source == "video_file":
+            self.pipeline = self._build_video_file_pipeline()
         else:
             raise RuntimeError(f"Unsupported camera source: {self.config.source}")
 
@@ -206,6 +210,27 @@ class GStreamerCamera(QObject):
             playbin.set_property("audio-sink", audio_sink)
 
         playbin.connect("source-setup", self._configure_rtsp_source)
+        return playbin
+
+    def _build_video_file_pipeline(self):
+        if not self.config.file_path:
+            raise RuntimeError("Video file path is required.")
+
+        playbin = self._make_element("playbin", "video_file_pipeline")
+        self.appsink = self._create_appsink()
+
+        if "://" in self.config.file_path:
+            uri = self.config.file_path
+        else:
+            uri = Path(self.config.file_path).expanduser().resolve().as_uri()
+
+        playbin.set_property("uri", uri)
+        playbin.set_property("video-sink", self.appsink)
+
+        audio_sink = Gst.ElementFactory.make("fakesink", "audio_sink")
+        if audio_sink is not None:
+            playbin.set_property("audio-sink", audio_sink)
+
         return playbin
 
     def _configure_rtsp_source(self, _playbin, source):
@@ -386,6 +411,7 @@ class GStreamerCamera(QObject):
 
 
 class CameraViewerWidget(QWidget):
+    frame_ready = Signal(QImage)
     metrics_changed = Signal(object)
     status_changed = Signal(str)
     error_occurred = Signal(str)
@@ -456,6 +482,7 @@ class CameraViewerWidget(QWidget):
             self.stop(clear_feed=False)
             self.camera = GStreamerCamera(self.config, self)
             self.camera.frame_ready.connect(self.camera_feed.set_image)
+            self.camera.frame_ready.connect(self.frame_ready.emit)
             self.camera.metrics_changed.connect(self.metrics_changed.emit)
             self.camera.status_changed.connect(self.status_changed.emit)
             self.camera.error_occurred.connect(self._handle_error)

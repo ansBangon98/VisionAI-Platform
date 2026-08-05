@@ -1,0 +1,23 @@
+application:
+  name: Vehicle Analytics
+  enabled: false
+
+source:
+  name: parking_area
+
+detector:
+  model: core/models/detection/vehicle_yolo11n.onnx
+  backend: onnxruntime
+  device: auto
+  providers: []
+  confidence_threshold: 0.4
+  nms_iou_threshold: 0.45
+  input_size: [640, 640]
+  input_shape: [1, 3, 640, 640]
+
+tracker:
+  type: bytetrack
+  track_thresh: 0.5
+  match_thresh: 0.8
+  track_buffer: 30
+  frame_rate: 30

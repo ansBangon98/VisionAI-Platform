@@ -1077,12 +1077,12 @@ border:None;</string>
                         </font>
                        </property>
                        <property name="styleSheet">
-                        <string notr="true">color: #ffffff;</string>
-                       </property>
-                       <property name="text">
-                        <string>5</string>
-                       </property>
-                      </widget>
+                       <string notr="true">color: #ffffff;</string>
+                      </property>
+                      <property name="text">
+                        <string>0</string>
+                      </property>
+                     </widget>
                      </item>
                     </layout>
                    </widget>

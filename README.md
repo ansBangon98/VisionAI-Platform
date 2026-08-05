@@ -2,6 +2,12 @@
 
 Computer vision analytics project using Python, PySide6, and GStreamer.
 
+## Configuration Layout
+
+Shared camera sources live in `configs/cameras.yaml`. Application configs live in `configs/apps/*.yaml` and select a camera by source name.
+
+Sensitive RTSP URLs should be stored in `.env`, not YAML. Use `.env.example` as the public template.
+
 ## Requirements
 
 - Ubuntu Linux
