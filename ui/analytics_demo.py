@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QSlider,
 )
 from PySide6.QtCore import QEvent, QFile, QObject, QThread, Signal, Slot
 from PySide6.QtGui import QImage
@@ -17,7 +18,10 @@ from PySide6.QtUiTools import QUiLoader
 
 from apps.registry import AppDefinition, discover_app_configs
 from core.camera import CameraFactory, CameraRegistry, CameraSourceDefinition
-from core.camera.gstreamer import CameraMetrics, attach_camera_viewer
+from core.camera.camera_config import CameraMetrics
+from core.pipelines.cpu.frame_processor import frame_result_to_legacy_objects
+from core.pipelines.cpu.gstreamer_pipeline import attach_camera_viewer
+from core.results.frame_result import FrameResult
 
 
 try:
@@ -50,8 +54,13 @@ class AnalyticsWorker(QObject):
     @Slot(QImage)
     def process_frame(self, frame: QImage):
         try:
-            results = self.pipeline.process(frame)
-            summary = self.analytics.update(results)
+            frame_result = self.process_frame_result(frame)
+            if frame_result is not None:
+                results = frame_result_to_legacy_objects(frame_result)
+                summary = self.analytics.update(frame_result)
+            else:
+                results = self.pipeline.process(frame)
+                summary = self.analytics.update(results)
             source_size = (frame.width(), frame.height())
             self.results_ready.emit(results, summary, source_size)
         except RuntimeError as error:
@@ -64,9 +73,23 @@ class AnalyticsWorker(QObject):
         finally:
             self.processing_finished.emit()
 
+    def process_frame_result(self, frame: QImage) -> FrameResult | None:
+        processor = getattr(self.pipeline, "process_frame_result", None)
+        if not callable(processor):
+            return None
+
+        result = processor(frame)
+        if not isinstance(result, FrameResult):
+            raise RuntimeError(
+                f"{self.app_name} returned {type(result).__name__}; expected FrameResult."
+            )
+        return result
+
 
 class ObjectCountAnalytics:
     def update(self, results):
+        if isinstance(results, FrameResult):
+            return {"current_objects": len(results.detections)}
         return {"current_objects": len(results)}
 
 
@@ -84,6 +107,7 @@ class MainWindow(QMainWindow):
         self.camera_source_by_key: dict[str, CameraSourceDefinition] = {}
         self.selected_app: AppDefinition | None = None
         self.selected_camera_source: str | None = None
+        self.active_pipeline = None
         self._analytics_busy = False
         self._analytics_enabled = False
         self._analytics_thread = None
@@ -110,6 +134,7 @@ class MainWindow(QMainWindow):
             self.performance_metrics()
             self.setup_right_aligned_header_widgets()
             self.setup_results_widgets()
+            self.setup_model_profile_widgets()
             self.setup_camera_feed_widget()
             self.setup_camera_source_selector()
             self.setup_application_selector()
@@ -227,6 +252,151 @@ class MainWindow(QMainWindow):
 
         self.lbl_Objects.setText("0")
 
+    def setup_model_profile_widgets(self):
+        self.model_profile_labels = {
+            "base_model": self.find_first_child(
+                QLabel,
+                "lbl_basemodel",
+                "lbl_base_model",
+                "project_title_11",
+            ),
+            "framework": self.find_first_child(
+                QLabel,
+                "lbl_framework",
+                "project_title_13",
+            ),
+            "device": self.find_first_child(
+                QLabel,
+                "lbl_device",
+                "project_title_15",
+            ),
+            "model_input_size": self.find_first_child(
+                QLabel,
+                "lbl_model_input_size",
+                "project_title_17",
+            ),
+            "confidence_threshold": self.find_first_child(
+                QLabel,
+                "lbl_confidence_threshold",
+                "lbl_confidence_threshold_value",
+                "project_title_20",
+            ),
+        }
+        self.hslider_confidence_threshold = self.find_first_child(
+            QSlider,
+            "hslider_confidence_threshold",
+            "horizontalSlider",
+        )
+
+        if self.hslider_confidence_threshold is not None:
+            self.hslider_confidence_threshold.setRange(0, 100)
+            self.hslider_confidence_threshold.setSingleStep(1)
+            self.hslider_confidence_threshold.setPageStep(5)
+            self.hslider_confidence_threshold.valueChanged.connect(
+                self.handle_confidence_threshold_changed
+            )
+
+        self.reset_model_profile()
+
+    def find_first_child(self, widget_type, *object_names):
+        for object_name in object_names:
+            widget = self.ui.findChild(widget_type, object_name)
+            if widget is not None:
+                return widget
+        return None
+
+    def reset_model_profile(self):
+        for label in self.model_profile_labels.values():
+            if label is not None:
+                label.setText("--")
+                label.setToolTip("")
+
+        if self.hslider_confidence_threshold is not None:
+            self.hslider_confidence_threshold.blockSignals(True)
+            self.hslider_confidence_threshold.setValue(0)
+            self.hslider_confidence_threshold.setEnabled(False)
+            self.hslider_confidence_threshold.blockSignals(False)
+
+    def update_model_profile(self, pipeline):
+        profile = self.pipeline_model_profile(pipeline)
+        if not profile:
+            self.reset_model_profile()
+            return
+
+        self.set_model_profile_label("base_model", profile.get("base_model"))
+        self.set_model_profile_label("framework", profile.get("framework"))
+        self.set_model_profile_label("device", profile.get("device"))
+        self.set_model_profile_label(
+            "model_input_size",
+            profile.get("model_input_size"),
+        )
+
+        confidence_threshold = self.profile_confidence_threshold(profile)
+        if confidence_threshold is None:
+            self.set_model_profile_label("confidence_threshold", "--")
+            if self.hslider_confidence_threshold is not None:
+                self.hslider_confidence_threshold.setEnabled(False)
+            return
+
+        self.set_model_profile_label(
+            "confidence_threshold",
+            f"{confidence_threshold:.2f}",
+        )
+        if self.hslider_confidence_threshold is not None:
+            self.hslider_confidence_threshold.blockSignals(True)
+            self.hslider_confidence_threshold.setValue(
+                round(confidence_threshold * 100)
+            )
+            self.hslider_confidence_threshold.setEnabled(True)
+            self.hslider_confidence_threshold.blockSignals(False)
+
+    def pipeline_model_profile(self, pipeline) -> dict:
+        profile_getter = getattr(pipeline, "model_profile", None)
+        if not callable(profile_getter):
+            return {}
+
+        try:
+            profile = profile_getter()
+        except Exception:
+            return {}
+
+        return profile if isinstance(profile, dict) else {}
+
+    def profile_confidence_threshold(self, profile: dict) -> float | None:
+        value = profile.get("confidence_threshold")
+        if value is None:
+            return None
+
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            return None
+
+    def set_model_profile_label(self, key: str, value):
+        label = self.model_profile_labels.get(key)
+        if label is None:
+            return
+
+        text = str(value) if value not in (None, "") else "--"
+        label.setText(text)
+        label.setToolTip("" if text == "--" else text)
+
+    @Slot(int)
+    def handle_confidence_threshold_changed(self, value: int):
+        confidence_threshold = max(0.0, min(1.0, int(value) / 100.0))
+        self.set_model_profile_label(
+            "confidence_threshold",
+            f"{confidence_threshold:.2f}",
+        )
+
+        pipeline = self.active_pipeline
+        if pipeline is None:
+            return
+
+        setter = getattr(pipeline, "set_confidence_threshold", None)
+        if callable(setter):
+            setter(confidence_threshold)
+
     def setup_camera_source_selector(self):
         self.available_camera_sources = self.camera_registry.list_sources()
         self.camera_source_by_key = {
@@ -288,8 +458,10 @@ class MainWindow(QMainWindow):
         self.stop_active_analytics()
         self.stop_camera()
         self.selected_app = None
+        self.active_pipeline = None
         self.lbl_Objects.setText("0")
         self.clear_video_overlays()
+        self.reset_model_profile()
 
         if not app_key:
             self.set_live_inference_status("Select App", is_live=False)
@@ -319,6 +491,9 @@ class MainWindow(QMainWindow):
                 traceback.format_exc(),
             )
             return
+
+        self.active_pipeline = pipeline
+        self.update_model_profile(pipeline)
 
         try:
             self.select_app_default_camera(app)
@@ -512,18 +687,16 @@ class MainWindow(QMainWindow):
     def update_video_overlays(self, results, source_size=None):
         if not hasattr(self, "camera_viewer"):
             return
-        camera_feed = getattr(self.camera_viewer, "camera_feed", None)
-        if camera_feed is None or not hasattr(camera_feed, "set_overlays"):
+        if not hasattr(self.camera_viewer, "set_overlays"):
             return
-        camera_feed.set_overlays(results, source_size)
+        self.camera_viewer.set_overlays(results, source_size)
 
     def clear_video_overlays(self):
         if not hasattr(self, "camera_viewer"):
             return
-        camera_feed = getattr(self.camera_viewer, "camera_feed", None)
-        if camera_feed is None or not hasattr(camera_feed, "clear_overlays"):
+        if not hasattr(self.camera_viewer, "clear_overlays"):
             return
-        camera_feed.clear_overlays()
+        self.camera_viewer.clear_overlays()
 
     def setup_right_aligned_header_widgets(self):
         self.header_frame = self.ui.findChild(QFrame, "frame_3")

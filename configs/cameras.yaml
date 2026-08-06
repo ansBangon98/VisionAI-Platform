@@ -6,8 +6,9 @@ sources:
     latency: 300
     protocol: tcp
     reconnect: true
+    display_sink: ximagesink
     inference:
-      fps: 5
+      fps: 15
       width: 640
       height: 0
 
@@ -18,19 +19,21 @@ sources:
     latency: 500
     protocol: tcp
     reconnect: true
+    display_sink: ximagesink
     inference:
-      fps: 5
+      fps: 15
       width: 640
       height: 0
 
   usb_camera_0:
     label: USB Camera 0
     type: usb
-    device: 0
-    width: 1280
-    height: 720
+    device: /dev/video0
+    width: 640
+    height: 480
     fps: 30
     usb_format: raw
+    display_sink: ximagesink
     inference:
       fps: 5
       width: 640
@@ -44,6 +47,7 @@ sources:
     height: 1080
     fps: 30
     usb_format: raw
+    display_sink: ximagesink
     inference:
       fps: 5
       width: 640

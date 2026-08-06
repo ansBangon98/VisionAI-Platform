@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +21,8 @@ from core.loaders.onnx_loader import OnnxModelLoader
 from core.loaders.openvino_loader import OpenVinoModelLoader
 from core.loaders.pytorch_loader import PyTorchModelLoader
 from core.loaders.tensorrt_loader import TensorRtModelLoader
+from core.pipelines.cpu.frame_processor import frame_result_to_legacy_objects
+from core.results.frame_result import BoundingBox, Detection as FrameDetection, FrameResult
 from core.tracking.bytetrack.byte_tracker import BYTETracker
 
 try:
@@ -33,6 +37,7 @@ except ImportError:  # pragma: no cover - PySide is present in the app runtime.
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "apps" / "people_analytics.yaml"
+DEFAULT_SETTINGS_PATH = PROJECT_ROOT / "configs" / "settings.yaml"
 
 
 @dataclass(frozen=True)
@@ -135,6 +140,20 @@ class YoloPeopleDetector:
                 f"{self.model_path}"
             )
         self.input_name = self.backend.input_specs[0].name
+
+    def model_profile(self) -> dict[str, object]:
+        sidecar_metadata = _load_model_sidecar_metadata(self.model_path)
+        return {
+            "base_model": _profile_base_model(self.model_path, sidecar_metadata),
+            "framework": _profile_framework_name(self.backend_name, self.backend),
+            "device": _profile_device_name(self.backend),
+            "model_input_size": f"{self.input_width}x{self.input_height}",
+            "confidence_threshold": self.confidence_threshold,
+            "model_path": str(self.model_path),
+        }
+
+    def set_confidence_threshold(self, confidence_threshold: float) -> None:
+        self.confidence_threshold = max(0.0, min(1.0, float(confidence_threshold)))
 
     def predict(self, frame: object) -> list[Detection]:
         try:
@@ -539,16 +558,29 @@ class PeopleAnalyticsPipeline:
         people_class_ids: Sequence[int] = (0,),
         face_class_ids: Sequence[int] = (1,),
         class_labels: dict[int, str] | None = None,
+        source_id: str = "default",
     ):
         self.detector = detector
         self.tracker = tracker
+        self.source_id = str(source_id or "default")
+        self._frame_number = 0
         people_class_id_values = [int(class_id) for class_id in people_class_ids]
         self.people_class_ids = set(people_class_id_values)
         self.person_class_id = people_class_id_values[0] if people_class_id_values else 0
         self.face_class_ids = {int(class_id) for class_id in face_class_ids}
         self.class_labels = class_labels or {0: "person", 1: "face"}
 
+    def model_profile(self) -> dict[str, object]:
+        return self.detector.model_profile()
+
+    def set_confidence_threshold(self, confidence_threshold: float) -> None:
+        self.detector.set_confidence_threshold(confidence_threshold)
+
     def process(self, frame: object) -> list[dict[str, object]]:
+        return frame_result_to_legacy_objects(self.process_frame_result(frame))
+
+    def process_frame_result(self, frame: object) -> FrameResult:
+        started_at = time.perf_counter()
         detections = self.detector.predict(frame)
         frame_height, frame_width = frame_size(frame)
         people_detections = [
@@ -563,28 +595,37 @@ class PeopleAnalyticsPipeline:
         ]
         tracks = self.tracker.update(people_detections, (frame_height, frame_width))
 
-        results = [
-            {
-                "type": "person",
-                "label": self._class_label(self.person_class_id),
-                "class_id": self.person_class_id,
-                "track_id": track.track_id,
-                "bbox": track.bbox,
-            }
+        frame_detections = [
+            FrameDetection(
+                class_id=self.person_class_id,
+                label=self._class_label(self.person_class_id),
+                confidence=_track_confidence(track.bbox, people_detections),
+                bbox=_result_bbox(track.bbox),
+                track_id=track.track_id,
+            )
             for track in tracks
         ]
-        results.extend(
-            {
-                "type": "face",
-                "label": self._class_label(detection.class_id),
-                "class_id": detection.class_id,
-                "track_id": None,
-                "bbox": _clip_bbox(detection.bbox, frame_width, frame_height),
-                "score": detection.score,
-            }
+        frame_detections.extend(
+            FrameDetection(
+                class_id=detection.class_id,
+                label=self._class_label(detection.class_id),
+                confidence=detection.score,
+                bbox=_result_bbox(
+                    _clip_bbox(detection.bbox, frame_width, frame_height)
+                ),
+                track_id=None,
+            )
             for detection in face_detections
         )
-        return results
+
+        self._frame_number += 1
+        return FrameResult(
+            source_id=self.source_id,
+            frame_number=self._frame_number,
+            timestamp=time.time(),
+            detections=frame_detections,
+            inference_ms=(time.perf_counter() - started_at) * 1000.0,
+        )
 
     def _class_label(self, class_id: int) -> str:
         return self.class_labels.get(int(class_id), f"class_{class_id}")
@@ -592,9 +633,19 @@ class PeopleAnalyticsPipeline:
 
 def create_pipeline_from_config(
     config_path: str | Path = DEFAULT_CONFIG_PATH,
-) -> PeopleAnalyticsPipeline:
+) -> object:
+    from core.pipelines.pipeline_factory import PipelineFactory
+
     config = load_config(config_path)
-    detector_config = config.get("detector", {})
+    runtime_mode, inference_backend = PipelineFactory.resolve_runtime(config)
+    if runtime_mode == "deepstream":
+        return PipelineFactory.create(config)
+
+    detector_config = _runtime_detector_config(
+        config,
+        runtime_mode,
+        inference_backend=inference_backend,
+    )
     tracker_config = config.get("tracker", {})
 
     if not isinstance(detector_config, dict):
@@ -635,17 +686,235 @@ def create_pipeline_from_config(
         track_buffer=tracker_config.get("track_buffer", 30),
         frame_rate=tracker_config.get("frame_rate", 30),
     )
-    return PeopleAnalyticsPipeline(
+    frame_processor = PeopleAnalyticsPipeline(
         detector=detector,
         tracker=tracker,
         people_class_ids=people_class_ids,
         face_class_ids=face_class_ids,
         class_labels=load_class_labels(model_path),
+        source_id=_source_id_from_config(config),
+    )
+    return PipelineFactory.create(config, frame_processor=frame_processor)
+
+
+def load_config(
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+    settings_path: str | Path = DEFAULT_SETTINGS_PATH,
+) -> dict[str, Any]:
+    config = load_yaml_config(config_path)
+    settings = load_yaml_config(settings_path) if Path(settings_path).exists() else {}
+    return _merge_runtime_settings(config, settings)
+
+
+def _load_model_sidecar_metadata(model_path: Path) -> dict[str, Any]:
+    for metadata_path in (
+        model_path.with_name("metadata.yaml"),
+        model_path.with_name("metadata.yml"),
+        model_path.with_suffix(".yaml"),
+        model_path.with_suffix(".yml"),
+    ):
+        if not metadata_path.exists():
+            continue
+        try:
+            return load_yaml_config(metadata_path)
+        except RuntimeError:
+            return {}
+    return {}
+
+
+def _profile_base_model(model_path: Path, metadata: dict[str, Any]) -> str:
+    for key in ("base_model", "model_name", "name", "architecture"):
+        value = metadata.get(key)
+        if value:
+            return _prettify_model_name(str(value))
+
+    description = str(metadata.get("description") or "")
+    model_name = _extract_known_model_name(description)
+    if model_name:
+        return model_name
+
+    for candidate in (model_path.stem, model_path.parent.name):
+        model_name = _extract_known_model_name(candidate)
+        if model_name:
+            return model_name
+
+    stem = model_path.stem
+    if stem.lower() == "best":
+        stem = model_path.parent.name
+    return _prettify_model_name(stem)
+
+
+def _extract_known_model_name(value: str) -> str:
+    match = re.search(
+        r"\b(yolo(?:v)?\d+[a-z0-9]*|mobilenetv\d+(?:[-_][a-z0-9]+)?)\b",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    return _prettify_model_name(match.group(1))
+
+
+def _prettify_model_name(value: str) -> str:
+    text = str(value).strip().replace("_", "-")
+    if not text:
+        return "--"
+
+    if text.lower().startswith("yolo"):
+        return "YOLO" + text[4:]
+    if text.lower().startswith("mobilenet"):
+        return "MobileNet" + text[9:]
+    return text
+
+
+def _profile_framework_name(backend_name: str, backend: InferenceBackend) -> str:
+    loader = getattr(backend, "loader", None)
+    runtime_name = getattr(loader, "runtime_name", "")
+    if runtime_name:
+        return str(runtime_name)
+
+    return {
+        "onnxruntime": "ONNX Runtime",
+        "openvino": "OpenVINO",
+        "pytorch": "PyTorch",
+        "tensorrt": "TensorRT",
+    }.get(str(backend_name), str(backend_name))
+
+
+def _profile_device_name(backend: InferenceBackend) -> str:
+    loader = getattr(backend, "loader", None)
+    metadata = getattr(loader, "metadata", {}) or {}
+    device = metadata.get("device")
+    if device:
+        return str(device)
+
+    providers = getattr(loader, "providers", None) or []
+    if providers:
+        return ", ".join(str(provider) for provider in providers)
+
+    config = getattr(loader, "config", None)
+    configured_device = getattr(config, "device", "") if config is not None else ""
+    return str(configured_device or "--")
+
+
+def _runtime_detector_config(
+    config: dict[str, Any],
+    runtime_mode: str,
+    inference_backend: str | None = None,
+) -> dict[str, Any]:
+    detector_config = dict(config.get("detector", {}) or {})
+    runtime_config = config.get(runtime_mode, {})
+    if not isinstance(runtime_config, dict):
+        if inference_backend:
+            _apply_runtime_backend(detector_config, inference_backend)
+        return detector_config
+
+    if inference_backend is None and runtime_config.get("inference_backend"):
+        inference_backend = str(runtime_config["inference_backend"])
+
+    if inference_backend:
+        _apply_runtime_backend(detector_config, str(inference_backend))
+
+    device = runtime_config.get("device")
+    if device:
+        detector_config["device"] = device
+
+    runtime_detector_config = runtime_config.get("detector", {})
+    if isinstance(runtime_detector_config, dict):
+        detector_config.update(runtime_detector_config)
+
+    return detector_config
+
+
+def _apply_runtime_backend(
+    detector_config: dict[str, Any],
+    inference_backend: str,
+) -> None:
+    normalized = inference_backend.strip().lower().replace("-", "_")
+    if normalized in {"onnxruntime_cuda", "ort_cuda"}:
+        detector_config["backend"] = "onnxruntime"
+        detector_config.setdefault(
+            "providers",
+            ["CUDAExecutionProvider", "CPUExecutionProvider"],
+        )
+        detector_config.setdefault("device", "CUDA")
+        return
+
+    if normalized in {"onnxruntime_cpu", "ort_cpu"}:
+        detector_config["backend"] = "onnxruntime"
+        detector_config.setdefault("providers", ["CPUExecutionProvider"])
+        detector_config.setdefault("device", "CPU")
+        return
+
+    detector_config["backend"] = inference_backend
+
+
+def _merge_runtime_settings(
+    app_config: dict[str, Any],
+    settings_config: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(app_config)
+    for key in ("runtime", "cpu", "cuda", "deepstream"):
+        if key not in settings_config:
+            continue
+        if key not in merged:
+            merged[key] = settings_config[key]
+            continue
+        if isinstance(settings_config[key], dict) and isinstance(merged[key], dict):
+            merged[key] = _deep_merge_dict(settings_config[key], merged[key])
+
+    return merged
+
+
+def _deep_merge_dict(
+    base: dict[str, Any],
+    override: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _source_id_from_config(config: dict[str, Any]) -> str:
+    source_config = config.get("source", {})
+    if isinstance(source_config, dict):
+        for key in ("name", "selected", "id"):
+            value = source_config.get(key)
+            if value:
+                return str(value)
+    return "default"
+
+
+def _result_bbox(bbox: Sequence[float]) -> BoundingBox:
+    x1, y1, x2, y2 = [float(value) for value in bbox]
+    return BoundingBox(
+        x=x1,
+        y=y1,
+        width=max(0.0, x2 - x1),
+        height=max(0.0, y2 - y1),
     )
 
 
-def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
-    return load_yaml_config(config_path)
+def _track_confidence(
+    track_bbox: Sequence[float],
+    detections: Sequence[Detection],
+) -> float:
+    if not detections:
+        return 1.0
+
+    boxes = np.asarray([detection.bbox for detection in detections], dtype=np.float32)
+    ious = _box_iou(np.asarray(track_bbox, dtype=np.float32), boxes)
+    if ious.size == 0:
+        return 1.0
+
+    best_index = int(np.argmax(ious))
+    if float(ious[best_index]) <= 0:
+        return 1.0
+    return float(detections[best_index].score)
 
 
 def frame_size(frame: object) -> tuple[int, int]:

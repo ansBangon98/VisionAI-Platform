@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.camera.gstreamer import CameraConfig
+from core.camera.camera_config import CameraConfig
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ class CameraFactory:
         label = str(config.get("label", _title_from_key(name)))
         reconnect = bool(config.get("reconnect", True))
         inference_config = _inference_config(config)
+        display_sink = str(config.get("display_sink", "ximagesink"))
 
         if source_type == "rtsp":
             uri = str(config.get("uri", ""))
@@ -30,6 +31,7 @@ class CameraFactory:
                 latency=int(config.get("latency", 300)),
                 protocol=str(config.get("protocol", "tcp")),
                 reconnect=reconnect,
+                display_sink=display_sink,
                 **inference_config,
             )
 
@@ -43,6 +45,7 @@ class CameraFactory:
                 fps=int(config.get("fps", 30)),
                 usb_format=str(config.get("usb_format", "raw")),
                 reconnect=reconnect,
+                display_sink=display_sink,
                 **inference_config,
             )
 
@@ -53,6 +56,7 @@ class CameraFactory:
                 path=str(config.get("path", "")),
                 loop=bool(config.get("loop", False)),
                 reconnect=reconnect,
+                display_sink=display_sink,
                 **inference_config,
             )
 

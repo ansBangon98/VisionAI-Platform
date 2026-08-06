@@ -2,5 +2,27 @@ application:
   default_app: people_analytics
   show_disabled_apps: true
 
+runtime:
+  # Supported values: auto, cpu, cuda, deepstream
+  mode: auto
+
+cpu:
+  video_pipeline: gstreamer
+  inference_backend: openvino
+  device: CPU
+
+cuda:
+  video_pipeline: gstreamer
+  inference_backend: onnxruntime_cuda
+  device: CUDA
+
+deepstream:
+  pgie_config: ""
+  tracker_config: ""
+  batch_size: 1
+  width: 1280
+  height: 720
+  batched_push_timeout: 40000
+
 camera:
   default_source: office_entrance

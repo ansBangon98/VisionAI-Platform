@@ -1077,12 +1077,12 @@ border:None;</string>
                         </font>
                        </property>
                        <property name="styleSheet">
-                       <string notr="true">color: #ffffff;</string>
-                      </property>
-                      <property name="text">
+                        <string notr="true">color: #ffffff;</string>
+                       </property>
+                       <property name="text">
                         <string>0</string>
-                      </property>
-                     </widget>
+                       </property>
+                      </widget>
                      </item>
                     </layout>
                    </widget>
@@ -1498,7 +1498,7 @@ border:none;</string>
                       </widget>
                      </item>
                      <item>
-                      <widget class="QLabel" name="project_title_11">
+                      <widget class="QLabel" name="lbl_basemodel">
                        <property name="maximumSize">
                         <size>
                          <width>16777215</width>
@@ -1660,7 +1660,7 @@ border:none;</string>
                       </widget>
                      </item>
                      <item>
-                      <widget class="QLabel" name="project_title_13">
+                      <widget class="QLabel" name="lbl_framework">
                        <property name="maximumSize">
                         <size>
                          <width>16777215</width>
@@ -1816,7 +1816,7 @@ border:none;</string>
                       </widget>
                      </item>
                      <item>
-                      <widget class="QLabel" name="project_title_15">
+                      <widget class="QLabel" name="lbl_device">
                        <property name="maximumSize">
                         <size>
                          <width>16777215</width>
@@ -1978,7 +1978,7 @@ border:none;</string>
                       </widget>
                      </item>
                      <item>
-                      <widget class="QLabel" name="project_title_17">
+                      <widget class="QLabel" name="lbl_model_input_size">
                        <property name="maximumSize">
                         <size>
                          <width>16777215</width>
@@ -2198,7 +2198,7 @@ padding-left:15px;</string>
                 </widget>
                </item>
                <item>
-                <widget class="QSlider" name="horizontalSlider">
+                <widget class="QSlider" name="hslider_confidence_threshold">
                  <property name="singleStep">
                   <number>0</number>
                  </property>
