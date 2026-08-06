@@ -17,8 +17,8 @@ cuda:
   device: CUDA
 
 deepstream:
-  pgie_config: ""
-  tracker_config: ""
+  pgie_config: deepstream/configs/pgie/face_people_detector.txt
+  tracker_config: deepstream/configs/tracker/config_tracker_NvDCF_perf.yml
   batch_size: 1
   width: 1280
   height: 720
