@@ -6,6 +6,10 @@ sources:
     latency: 300
     protocol: tcp
     reconnect: true
+    inference:
+      fps: 5
+      width: 640
+      height: 0
 
   office_activity_area:
     label: Office Activity Area
@@ -14,6 +18,10 @@ sources:
     latency: 500
     protocol: tcp
     reconnect: true
+    inference:
+      fps: 5
+      width: 640
+      height: 0
 
   usb_camera_0:
     label: USB Camera 0
@@ -23,6 +31,10 @@ sources:
     height: 720
     fps: 30
     usb_format: raw
+    inference:
+      fps: 5
+      width: 640
+      height: 0
 
   usb_camera_1:
     label: USB Camera 1
@@ -32,3 +44,7 @@ sources:
     height: 1080
     fps: 30
     usb_format: raw
+    inference:
+      fps: 5
+      width: 640
+      height: 0

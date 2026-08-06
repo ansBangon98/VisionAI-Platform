@@ -77,8 +77,10 @@ class OnnxModelLoader(ModelLoader):
                 self.providers = available
 
     def load_model(self) -> None:
+        session_options = self._session_options()
         self.session = self.ort.InferenceSession(
             str(self.model_path),
+            sess_options=session_options,
             providers=self.providers,
         )
         self.providers = list(self.session.get_providers())
@@ -136,6 +138,32 @@ class OnnxModelLoader(ModelLoader):
         }
         values.update(dict(metadata.custom_metadata_map or {}))
         return {key: value for key, value in values.items() if value not in ("", None)}
+
+    def _session_options(self):
+        options = self.ort.SessionOptions()
+        extras = dict(self.config.extras or {})
+
+        graph_level = str(
+            extras.get("graph_optimization_level", "all")
+        ).strip().lower()
+        graph_levels = {
+            "disable": self.ort.GraphOptimizationLevel.ORT_DISABLE_ALL,
+            "none": self.ort.GraphOptimizationLevel.ORT_DISABLE_ALL,
+            "basic": self.ort.GraphOptimizationLevel.ORT_ENABLE_BASIC,
+            "extended": self.ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED,
+            "all": self.ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+        }
+        options.graph_optimization_level = graph_levels.get(
+            graph_level,
+            self.ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+        )
+
+        if "intra_op_num_threads" in extras:
+            options.intra_op_num_threads = int(extras["intra_op_num_threads"])
+        if "inter_op_num_threads" in extras:
+            options.inter_op_num_threads = int(extras["inter_op_num_threads"])
+
+        return options
 
 
 def _onnx_dtype_name(type_name: str | None) -> str:

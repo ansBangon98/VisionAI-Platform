@@ -76,7 +76,11 @@ class OpenVinoModelLoader(ModelLoader):
                         f"Failed to reshape OpenVINO model inputs: {error}"
                     ) from error
 
-        self.compiled_model = self.core.compile_model(self.model, self.device_name)
+        self.compiled_model = self.core.compile_model(
+            self.model,
+            self.device_name,
+            self._compile_config(),
+        )
 
     def read_model_io(self) -> None:
         self._input_ports = list(self.compiled_model.inputs)
@@ -104,6 +108,23 @@ class OpenVinoModelLoader(ModelLoader):
         except Exception:
             pass
         return metadata
+
+    def _compile_config(self) -> dict[str, object]:
+        config: dict[str, object] = {}
+        extras = dict(self.config.extras or {})
+
+        performance_hint = extras.get("performance_hint")
+        if performance_hint:
+            config["PERFORMANCE_HINT"] = str(performance_hint).upper()
+
+        for option_key, openvino_key in {
+            "num_streams": "NUM_STREAMS",
+            "inference_num_threads": "INFERENCE_NUM_THREADS",
+        }.items():
+            if option_key in extras:
+                config[openvino_key] = extras[option_key]
+
+        return config
 
 
 def _port_name(port) -> str:

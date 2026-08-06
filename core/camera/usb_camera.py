@@ -13,6 +13,9 @@ class USBCamera(BaseCamera):
     height: int = 720
     fps: int = 30
     usb_format: str = "raw"
+    inference_fps: int = 5
+    inference_width: int = 640
+    inference_height: int = 0
 
     def to_camera_config(self) -> CameraConfig:
         return CameraConfig(
@@ -22,6 +25,9 @@ class USBCamera(BaseCamera):
             height=int(self.height),
             fps=int(self.fps),
             usb_format=self.usb_format,
+            inference_fps=int(self.inference_fps),
+            inference_width=int(self.inference_width),
+            inference_height=int(self.inference_height),
         )
 
     def _device_path(self) -> str:

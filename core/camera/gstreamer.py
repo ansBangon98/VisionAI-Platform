@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -33,19 +33,20 @@ try:
     import gi
 
     gi.require_version("Gst", "1.0")
+    gi.require_version("GstVideo", "1.0")
+    from gi.repository import Gst, GstVideo
 
     try:
         gi.require_version("GstRtsp", "1.0")
-        from gi.repository import Gst, GstRtsp
+        from gi.repository import GstRtsp
     except (ImportError, ValueError):
-        from gi.repository import Gst
-
         GstRtsp = None
 
     Gst.init(None)
     GST_IMPORT_ERROR = None
 except (ImportError, ValueError) as error:
     Gst = None
+    GstVideo = None
     GstRtsp = None
     GST_IMPORT_ERROR = error
 
@@ -62,6 +63,9 @@ class CameraConfig:
     rtsp_latency: int = 200
     rtsp_transport: str = "tcp"
     file_path: str = ""
+    inference_fps: int = 5
+    inference_width: int = 640
+    inference_height: int = 0
 
 
 @dataclass(frozen=True)
@@ -72,72 +76,48 @@ class CameraMetrics:
     height: int
 
 
-class CameraFeedLabel(QLabel):
+class OverlayWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._image = QImage()
         self._overlays: list[object] = []
-        self.setObjectName("camera_feed")
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._source_size: tuple[int, int] | None = None
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        if hasattr(Qt.WidgetAttribute, "WA_AlwaysStackOnTop"):
+            self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
+        self.setAutoFillBackground(False)
         self.setMinimumSize(1, 1)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setStyleSheet(
-            "#camera_feed {"
-            "background-color: #05070a;"
-            "color: #8b95a7;"
-            "border: 1px solid #1f2937;"
-            "}"
-        )
-        self.clear_feed("No camera feed")
 
-    def set_image(self, image: QImage):
-        self._image = image
-        self._paint_image()
-
-    def set_overlays(self, overlays: list[object] | tuple[object, ...] | None):
+    def set_overlays(
+        self,
+        overlays: list[object] | tuple[object, ...] | None,
+        source_size: tuple[int, int] | None = None,
+    ):
         self._overlays = list(overlays or [])
-        self._paint_image()
+        self._source_size = source_size
+        self.update()
 
     def clear_overlays(self):
         self._overlays = []
-        self._paint_image()
+        self.update()
 
-    def clear_feed(self, message: str):
-        self._image = QImage()
-        self._overlays = []
-        self.clear()
-        self.setText(message)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._paint_image()
-
-    def _paint_image(self):
-        if self._image.isNull():
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._overlays:
             return
 
-        image = self._image
-        if self._overlays:
-            image = self._image.copy()
-            self._draw_overlays(image)
-
-        pixmap = QPixmap.fromImage(image).scaled(
-            self.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self.setPixmap(pixmap)
-
-    def _draw_overlays(self, image: QImage):
-        painter = QPainter(image)
+        painter = QPainter(self)
         try:
-            pen_width = max(2, min(image.width(), image.height()) // 240)
+            pen_width = max(2, min(self.width(), self.height()) // 240)
+            video_rect = self._video_rect()
+
             for overlay in self._overlays:
-                bbox = _overlay_bbox(overlay, image.width(), image.height())
-                if bbox is None:
+                rect = _overlay_rect(overlay, self._source_size, video_rect)
+                if rect is None:
                     continue
 
-                x1, y1, x2, y2 = bbox
+                x1, y1, x2, y2 = rect
                 pen = QPen(_overlay_color(overlay))
                 pen.setWidth(pen_width)
                 painter.setPen(pen)
@@ -145,11 +125,95 @@ class CameraFeedLabel(QLabel):
         finally:
             painter.end()
 
+    def _video_rect(self) -> tuple[float, float, float, float]:
+        if not self._source_size:
+            return 0.0, 0.0, float(self.width()), float(self.height())
 
-def _overlay_bbox(
+        source_width, source_height = self._source_size
+        if source_width <= 0 or source_height <= 0:
+            return 0.0, 0.0, float(self.width()), float(self.height())
+
+        scale = min(self.width() / source_width, self.height() / source_height)
+        video_width = source_width * scale
+        video_height = source_height * scale
+        x = (self.width() - video_width) / 2
+        y = (self.height() - video_height) / 2
+        return x, y, video_width, video_height
+
+
+class CameraDisplayWidget(QWidget):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("camera_display")
+        self.setMinimumSize(1, 1)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setStyleSheet("#camera_display { background-color: #05070a; }")
+
+        self.video_widget = QWidget(self)
+        self.video_widget.setObjectName("gstreamer_video_surface")
+        self.video_widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        self.video_widget.setAttribute(
+            Qt.WidgetAttribute.WA_DontCreateNativeAncestors,
+            True,
+        )
+        self.video_widget.setStyleSheet(
+            "#gstreamer_video_surface { background-color: #05070a; }"
+        )
+
+        self.overlay_widget = OverlayWidget(self)
+
+        self.message_label = QLabel(self)
+        self.message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.message_label.setStyleSheet(
+            "background-color: #05070a;"
+            "color: #8b95a7;"
+            "border: 1px solid #1f2937;"
+        )
+        self.show_message("No camera feed")
+
+    def video_window_id(self) -> int:
+        return int(self.video_widget.winId())
+
+    def show_video(self):
+        self.message_label.hide()
+        self.video_widget.show()
+        self.overlay_widget.show()
+        self.overlay_widget.raise_()
+
+    def show_message(self, message: str):
+        self.clear_overlays()
+        self.video_widget.hide()
+        self.overlay_widget.hide()
+        self.message_label.setText(message)
+        self.message_label.show()
+        self.message_label.raise_()
+
+    def set_overlays(
+        self,
+        overlays: list[object] | tuple[object, ...] | None,
+        source_size: tuple[int, int] | None = None,
+    ):
+        self.overlay_widget.set_overlays(overlays, source_size)
+        self.overlay_widget.raise_()
+
+    def clear_overlays(self):
+        self.overlay_widget.clear_overlays()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        rect = self.rect()
+        self.video_widget.setGeometry(rect)
+        self.overlay_widget.setGeometry(rect)
+        self.message_label.setGeometry(rect)
+        self.overlay_widget.raise_()
+        if self.message_label.isVisible():
+            self.message_label.raise_()
+
+
+def _overlay_rect(
     overlay: object,
-    image_width: int,
-    image_height: int,
+    source_size: tuple[int, int] | None,
+    video_rect: tuple[float, float, float, float],
 ) -> tuple[int, int, int, int] | None:
     bbox = _overlay_value(overlay, "bbox")
     if bbox is None:
@@ -160,10 +224,22 @@ def _overlay_bbox(
     except (TypeError, ValueError):
         return None
 
-    x1 = _clamp_int(x1, 0, image_width)
-    y1 = _clamp_int(y1, 0, image_height)
-    x2 = _clamp_int(x2, 0, image_width)
-    y2 = _clamp_int(y2, 0, image_height)
+    rect_x, rect_y, rect_width, rect_height = video_rect
+    if source_size:
+        source_width, source_height = source_size
+    else:
+        source_width = rect_width
+        source_height = rect_height
+
+    if source_width <= 0 or source_height <= 0:
+        return None
+
+    scale_x = rect_width / source_width
+    scale_y = rect_height / source_height
+    x1 = _clamp_int(rect_x + x1 * scale_x, 0, rect_x + rect_width)
+    y1 = _clamp_int(rect_y + y1 * scale_y, 0, rect_y + rect_height)
+    x2 = _clamp_int(rect_x + x2 * scale_x, 0, rect_x + rect_width)
+    y2 = _clamp_int(rect_y + y2 * scale_y, 0, rect_y + rect_height)
 
     if x2 <= x1 or y2 <= y1:
         return None
@@ -191,7 +267,7 @@ def _overlay_value(overlay: object, key: str):
     return getattr(overlay, key, None)
 
 
-def _clamp_int(value: float, minimum: int, maximum: int) -> int:
+def _clamp_int(value: float, minimum: float, maximum: float) -> int:
     return int(round(max(minimum, min(float(value), maximum))))
 
 
@@ -201,11 +277,18 @@ class GStreamerCamera(QObject):
     status_changed = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, config: CameraConfig, parent: QObject | None = None):
+    def __init__(
+        self,
+        config: CameraConfig,
+        parent: QObject | None = None,
+        video_window_handle: int | None = None,
+    ):
         super().__init__(parent)
         self.config = config
+        self.video_window_handle = video_window_handle
         self.pipeline = None
         self.appsink = None
+        self.display_sink = None
         self.bus = None
         self._frame_times: deque[float] = deque(maxlen=30)
 
@@ -245,6 +328,7 @@ class GStreamerCamera(QObject):
 
         self.pipeline = None
         self.appsink = None
+        self.display_sink = None
         self.bus = None
 
         if emit_status:
@@ -259,6 +343,11 @@ class GStreamerCamera(QObject):
                 "GStreamer Python bindings are not available. Install python3-gi, "
                 "gir1.2-gstreamer-1.0, and the GStreamer plugin packages."
             ) from GST_IMPORT_ERROR
+        if GstVideo is None:
+            raise RuntimeError(
+                "GStreamer video overlay bindings are not available. Install "
+                "gir1.2-gst-plugins-base-1.0."
+            ) from GST_IMPORT_ERROR
 
     def _make_element(self, factory: str, name: str):
         element = Gst.ElementFactory.make(factory, name)
@@ -267,24 +356,141 @@ class GStreamerCamera(QObject):
         return element
 
     def _create_appsink(self):
-        appsink = self._make_element("appsink", "video_sink")
-        appsink.set_property("caps", Gst.Caps.from_string("video/x-raw,format=RGB"))
+        appsink = self._make_element("appsink", "infer_sink")
+        appsink.set_property("caps", Gst.Caps.from_string(self._inference_caps()))
         appsink.set_property("emit-signals", True)
         appsink.set_property("sync", False)
         appsink.set_property("max-buffers", 1)
-        appsink.set_property("drop", True)
+        self._set_property_if_available(appsink, "drop", True)
+        self._set_property_if_available(appsink, "leaky-type", "downstream")
         appsink.connect("new-sample", self._on_new_sample)
         return appsink
+
+    def _inference_caps(self) -> str:
+        values = [
+            "video/x-raw",
+            "format=RGB",
+            f"framerate={max(1, int(self.config.inference_fps))}/1",
+        ]
+        if self.config.inference_width > 0:
+            values.append(f"width={int(self.config.inference_width)}")
+        if self.config.inference_height > 0:
+            values.append(f"height={int(self.config.inference_height)}")
+        return ",".join(values)
+
+    def _create_video_sink_bin(self):
+        sink_bin = Gst.Bin.new("analytics_video_sink_bin")
+        input_queue = self._make_queue("analytics_input_queue")
+        tee = self._make_element("tee", "analytics_tee")
+
+        display_queue = self._make_queue("display_queue")
+        display_convert = self._make_element("videoconvert", "display_convert")
+        self.display_sink = self._create_display_sink()
+
+        infer_queue = self._make_queue(
+            "infer_queue",
+            leaky=True,
+            max_size_buffers=1,
+        )
+        videorate = self._make_element("videorate", "infer_videorate")
+        videoscale = self._make_element("videoscale", "infer_videoscale")
+        infer_convert = self._make_element("videoconvert", "infer_convert")
+        self.appsink = self._create_appsink()
+
+        elements = [
+            input_queue,
+            tee,
+            display_queue,
+            display_convert,
+            self.display_sink,
+            infer_queue,
+            videorate,
+            videoscale,
+            infer_convert,
+            self.appsink,
+        ]
+        for element in elements:
+            sink_bin.add(element)
+
+        self._link_many(input_queue, tee)
+        self._link_many(display_queue, display_convert, self.display_sink)
+        self._link_many(infer_queue, videorate, videoscale, infer_convert, self.appsink)
+
+        if not tee.link(display_queue):
+            raise RuntimeError("Could not link analytics tee to display queue.")
+        if not tee.link(infer_queue):
+            raise RuntimeError("Could not link analytics tee to inference queue.")
+
+        sink_pad = input_queue.get_static_pad("sink")
+        if sink_pad is None:
+            raise RuntimeError("Could not create analytics video sink pad.")
+        ghost_pad = Gst.GhostPad.new("sink", sink_pad)
+        if ghost_pad is None or not sink_bin.add_pad(ghost_pad):
+            raise RuntimeError("Could not add analytics video sink ghost pad.")
+
+        self._set_video_window_handle()
+        return sink_bin
+
+    def _make_queue(
+        self,
+        name: str,
+        leaky: bool = False,
+        max_size_buffers: int = 0,
+    ):
+        queue = self._make_element("queue", name)
+        if max_size_buffers > 0:
+            self._set_property_if_available(queue, "max-size-buffers", max_size_buffers)
+        if leaky:
+            self._set_property_if_available(queue, "leaky", 2)
+            self._set_property_if_available(queue, "max-size-time", 0)
+            self._set_property_if_available(queue, "max-size-bytes", 0)
+        return queue
+
+    def _create_display_sink(self):
+        for factory in ("glimagesink", "ximagesink", "xvimagesink", "autovideosink"):
+            sink = Gst.ElementFactory.make(factory, "display_sink")
+            if sink is None:
+                continue
+            self._set_property_if_available(sink, "sync", False)
+            self._set_property_if_available(sink, "force-aspect-ratio", True)
+            return sink
+
+        raise RuntimeError(
+            "No usable GStreamer video sink found. Install GStreamer good/base "
+            "plugins, for example gstreamer1.0-plugins-good."
+        )
+
+    def _link_many(self, *elements) -> None:
+        for current, next_element in zip(elements, elements[1:]):
+            if not current.link(next_element):
+                raise RuntimeError(
+                    f"Could not link GStreamer elements: "
+                    f"{current.get_name()} -> {next_element.get_name()}"
+                )
+
+    def _set_video_window_handle(self):
+        if self.display_sink is None or not self.video_window_handle:
+            return
+
+        try:
+            if hasattr(self.display_sink, "set_window_handle"):
+                self.display_sink.set_window_handle(self.video_window_handle)
+            else:
+                GstVideo.VideoOverlay.set_window_handle(
+                    self.display_sink,
+                    self.video_window_handle,
+                )
+        except (TypeError, AttributeError):
+            return
 
     def _build_rtsp_pipeline(self):
         if not self.config.rtsp_uri:
             raise RuntimeError("RTSP URI is required.")
 
         playbin = self._make_element("playbin", "rtsp_pipeline")
-        self.appsink = self._create_appsink()
 
         playbin.set_property("uri", self.config.rtsp_uri)
-        playbin.set_property("video-sink", self.appsink)
+        playbin.set_property("video-sink", self._create_video_sink_bin())
 
         audio_sink = Gst.ElementFactory.make("fakesink", "audio_sink")
         if audio_sink is not None:
@@ -298,7 +504,6 @@ class GStreamerCamera(QObject):
             raise RuntimeError("Video file path is required.")
 
         playbin = self._make_element("playbin", "video_file_pipeline")
-        self.appsink = self._create_appsink()
 
         if "://" in self.config.file_path:
             uri = self.config.file_path
@@ -306,7 +511,7 @@ class GStreamerCamera(QObject):
             uri = Path(self.config.file_path).expanduser().resolve().as_uri()
 
         playbin.set_property("uri", uri)
-        playbin.set_property("video-sink", self.appsink)
+        playbin.set_property("video-sink", self._create_video_sink_bin())
 
         audio_sink = Gst.ElementFactory.make("fakesink", "audio_sink")
         if audio_sink is not None:
@@ -340,30 +545,22 @@ class GStreamerCamera(QObject):
         pipeline = Gst.Pipeline.new("usb_camera_pipeline")
         source = self._make_element("v4l2src", "usb_source")
         input_caps = self._make_element("capsfilter", "usb_input_caps")
-        convert = self._make_element("videoconvert", "video_convert")
-        output_caps = self._make_element("capsfilter", "rgb_output_caps")
-        self.appsink = self._create_appsink()
+        video_sink = self._create_video_sink_bin()
 
         source.set_property("device", self.config.usb_device)
         input_caps.set_property("caps", Gst.Caps.from_string(self._usb_input_caps()))
-        output_caps.set_property("caps", Gst.Caps.from_string("video/x-raw,format=RGB"))
 
         elements = [source, input_caps]
 
         if self.config.usb_format == "mjpeg":
             elements.append(self._make_element("jpegdec", "jpeg_decoder"))
 
-        elements.extend([convert, output_caps, self.appsink])
+        elements.append(video_sink)
 
         for element in elements:
             pipeline.add(element)
 
-        for current, next_element in zip(elements, elements[1:]):
-            if not current.link(next_element):
-                raise RuntimeError(
-                    f"Could not link GStreamer elements: "
-                    f"{current.get_name()} -> {next_element.get_name()}"
-                )
+        self._link_many(*elements)
 
         return pipeline
 
@@ -508,7 +705,7 @@ class CameraViewerWidget(QWidget):
 
         self.config = config or CameraConfig()
         self.camera: GStreamerCamera | None = None
-        self.camera_feed = CameraFeedLabel()
+        self.camera_feed = CameraDisplayWidget()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -561,8 +758,12 @@ class CameraViewerWidget(QWidget):
 
         try:
             self.stop(clear_feed=False)
-            self.camera = GStreamerCamera(self.config, self)
-            self.camera.frame_ready.connect(self.camera_feed.set_image)
+            self.camera_feed.show_video()
+            self.camera = GStreamerCamera(
+                self.config,
+                self,
+                video_window_handle=self.camera_feed.video_window_id(),
+            )
             self.camera.frame_ready.connect(self.frame_ready.emit)
             self.camera.metrics_changed.connect(self.metrics_changed.emit)
             self.camera.status_changed.connect(self.status_changed.emit)
@@ -579,10 +780,10 @@ class CameraViewerWidget(QWidget):
             self.camera = None
 
         if clear_feed:
-            self.camera_feed.clear_feed("No camera feed")
+            self.camera_feed.show_message("No camera feed")
 
     def _handle_error(self, message: str):
-        self.camera_feed.clear_feed("Camera stopped")
+        self.camera_feed.show_message("Camera stopped")
         self.status_changed.emit(message)
         self.error_occurred.emit(message)
 

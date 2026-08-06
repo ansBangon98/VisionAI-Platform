@@ -17,6 +17,7 @@ class CameraFactory:
         name = str(config.get("name", "camera"))
         label = str(config.get("label", _title_from_key(name)))
         reconnect = bool(config.get("reconnect", True))
+        inference_config = _inference_config(config)
 
         if source_type == "rtsp":
             uri = str(config.get("uri", ""))
@@ -29,6 +30,7 @@ class CameraFactory:
                 latency=int(config.get("latency", 300)),
                 protocol=str(config.get("protocol", "tcp")),
                 reconnect=reconnect,
+                **inference_config,
             )
 
         if source_type == "usb":
@@ -41,6 +43,7 @@ class CameraFactory:
                 fps=int(config.get("fps", 30)),
                 usb_format=str(config.get("usb_format", "raw")),
                 reconnect=reconnect,
+                **inference_config,
             )
 
         if source_type in {"video_file", "file", "video"}:
@@ -50,6 +53,7 @@ class CameraFactory:
                 path=str(config.get("path", "")),
                 loop=bool(config.get("loop", False)),
                 reconnect=reconnect,
+                **inference_config,
             )
 
         raise RuntimeError(f"Unsupported camera type: {source_type}")
@@ -57,3 +61,21 @@ class CameraFactory:
 
 def _title_from_key(key: str) -> str:
     return key.replace("_", " ").title()
+
+
+def _inference_config(config: dict) -> dict[str, int]:
+    nested = config.get("inference", {})
+    if not isinstance(nested, dict):
+        nested = {}
+
+    return {
+        "inference_fps": int(
+            nested.get("fps", config.get("inference_fps", 5))
+        ),
+        "inference_width": int(
+            nested.get("width", config.get("inference_width", 640))
+        ),
+        "inference_height": int(
+            nested.get("height", config.get("inference_height", 0))
+        ),
+    }

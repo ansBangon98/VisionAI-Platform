@@ -37,7 +37,7 @@ def resource_path(relative: str) -> str:
 
 
 class AnalyticsWorker(QObject):
-    results_ready = Signal(object, object)
+    results_ready = Signal(object, object, object)
     error_occurred = Signal(str, str)
     processing_finished = Signal()
 
@@ -52,7 +52,8 @@ class AnalyticsWorker(QObject):
         try:
             results = self.pipeline.process(frame)
             summary = self.analytics.update(results)
-            self.results_ready.emit(results, summary)
+            source_size = (frame.width(), frame.height())
+            self.results_ready.emit(results, summary, source_size)
         except RuntimeError as error:
             self.error_occurred.emit(str(error), traceback.format_exc())
         except Exception as error:
@@ -446,13 +447,13 @@ class MainWindow(QMainWindow):
         self._analytics_busy = True
         self.analytics_frame_requested.emit(frame.copy())
 
-    @Slot(object, object)
-    def update_analytics_results(self, results, summary):
+    @Slot(object, object, object)
+    def update_analytics_results(self, results, summary, source_size=None):
         current_count = summary.get("current_people")
         if current_count is None:
             current_count = summary.get("current_objects", len(results or []))
         self.lbl_Objects.setText(str(int(current_count)))
-        self.update_video_overlays(results)
+        self.update_video_overlays(results, source_size)
 
     @Slot(str, str)
     def handle_analytics_error(self, message: str, details: str = ""):
@@ -508,13 +509,13 @@ class MainWindow(QMainWindow):
             return f"{fallback}: {error}"
         return fallback
 
-    def update_video_overlays(self, results):
+    def update_video_overlays(self, results, source_size=None):
         if not hasattr(self, "camera_viewer"):
             return
         camera_feed = getattr(self.camera_viewer, "camera_feed", None)
         if camera_feed is None or not hasattr(camera_feed, "set_overlays"):
             return
-        camera_feed.set_overlays(results)
+        camera_feed.set_overlays(results, source_size)
 
     def clear_video_overlays(self):
         if not hasattr(self, "camera_viewer"):

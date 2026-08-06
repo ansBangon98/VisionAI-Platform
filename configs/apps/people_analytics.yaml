@@ -5,12 +5,13 @@ source:
   name: office_pantry
 
 detector:
-  model: core/models/detection/yolo11n_people_face_cctv_v3.onnx
-  backend: onnxruntime
+  model: core/models/detection/openvino_yolo11n_people_face_cctv_v3/best.xml
+  backend: openvino
   # Supported backend values: onnxruntime, openvino, pytorch, tensorrt.
   # TensorRT uses a serialized engine file such as .engine, not the .onnx file.
-  device: auto
+  device: CPU
   providers: []
+  performance_hint: LATENCY
   confidence_threshold: 0.4
   nms_iou_threshold: 0.45
   input_size: [640, 640]
