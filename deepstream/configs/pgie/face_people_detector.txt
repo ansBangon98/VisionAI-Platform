@@ -1,0 +1,26 @@
+[property]
+gpu-id=0
+net-scale-factor=0.0039215697906911373
+model-color-format=0
+onnx-file=../../../models/detection/people_face/model.onnx
+model-engine-file=../../../models/detection/people_face/model.engine
+labelfile-path=../../../models/detection/people_face/labels.txt
+batch-size=1
+network-mode=2
+num-detected-classes=2
+network-type=0
+interval=0
+gie-unique-id=1
+process-mode=1
+cluster-mode=2
+maintain-aspect-ratio=1
+symmetric-padding=1
+
+# Enable these when the YOLO custom parser library is available.
+# custom-lib-path=../../parsers/libnvdsinfer_custom_impl_Yolo.so
+# parse-bbox-func-name=NvDsInferParseYolo
+
+[class-attrs-all]
+pre-cluster-threshold=0.25
+nms-iou-threshold=0.45
+topk=300

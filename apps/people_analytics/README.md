@@ -4,7 +4,7 @@ People Analytics is the application layer for counting and tracking people in th
 
 ## Current Features
 
-- Runs the `yolo11n_people_face_cctv_v3.onnx` detector from `core/models/detection`.
+- Runs the people/face detector from `models/detection/people_face`.
 - Selects the detector runtime from `detector.backend` in `configs/apps/people_analytics.yaml`.
 - Filters detections to the `person` class.
 - Tracks people with ByteTrack from `core/tracking/bytetrack`.
@@ -35,13 +35,30 @@ Future predictors such as gender, emotion, staff/customer classification, zone d
 The detector can use these backend values:
 
 ```yaml
-detector:
+application:
+  pipeline: detection
+
+primary_model:
   backend: onnxruntime
 ```
 
 Supported values are `onnxruntime`, `openvino`, `pytorch`, and `tensorrt`.
 
 The model file must match the selected runtime. ONNX Runtime uses `.onnx`; TensorRT uses a serialized engine such as `.engine`, `.plan`, or `.trt`.
+
+Model artifacts live outside application code:
+
+```text
+models/detection/people_face/
+  model.onnx
+  model.xml
+  model.bin
+  labels.txt
+  metadata.yaml
+```
+
+`metadata.yaml` is the preferred source for class names and model settings.
+`labels.txt` stays beside the model for runtimes such as DeepStream.
 
 ## Camera Source
 

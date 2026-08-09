@@ -1,24 +1,25 @@
 application:
   name: People Analytics
+  pipeline: detection
 
 source:
-  name: office_pantry
+  name: video_file_0
 
-detector:
-  model: core/models/detection/openvino_yolo11n_people_face_cctv_v3/best.xml
+primary_model:
+  name: people_face_detector
+  task: detection
+  model: models/detection/people_face/model.xml
   backend: openvino
   # Supported backend values: onnxruntime, openvino, pytorch, tensorrt.
   # TensorRT uses a serialized engine file such as .engine, not the .onnx file.
   device: CPU
   providers: []
   performance_hint: LATENCY
-  confidence_threshold: 0.4
+  confidence_threshold: 0.25
   nms_iou_threshold: 0.45
   input_size: [640, 640]
   input_shape: [1, 3, 640, 640]
   detect_class_ids: [0, 1]
-  people_class_ids: [0]
-  face_class_ids: [1]
 
 tracker:
   type: bytetrack
@@ -27,9 +28,25 @@ tracker:
   track_buffer: 30
   frame_rate: 30
 
-classifiers:
+analytics:
+  people:
+    enabled: true
+    people_class_ids: [0]
+    face_class_ids: [1]
+
+secondary_models:
   gender:
     enabled: false
+    task: classification
+    model: models/classification/gender/model.xml
+    backend: openvino
+    device: CPU
+    operate_on_classes: [1]
 
   emotion:
     enabled: false
+    task: classification
+    model: models/classification/emotion/model.xml
+    backend: openvino
+    device: CPU
+    operate_on_classes: [1]

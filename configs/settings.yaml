@@ -4,7 +4,7 @@ application:
 
 runtime:
   # Supported values: auto, cpu, cuda, deepstream
-  mode: auto
+  mode: cpu
 
 cpu:
   video_pipeline: gstreamer
@@ -25,4 +25,4 @@ deepstream:
   batched_push_timeout: 40000
 
 camera:
-  default_source: office_entrance
+  default_source: video_file_0

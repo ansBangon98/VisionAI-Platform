@@ -102,9 +102,10 @@ def _object_mapping(item: object) -> Mapping[str, object] | None:
 
 
 def _legacy_type(label: str, class_id: int) -> str:
-    normalized = str(label or "").strip().lower()
-    if normalized in {"person", "people"} or class_id == 0:
+    display_label = str(label or "").strip()
+    normalized = display_label.lower()
+    if normalized in {"person", "people"}:
         return "person"
-    if normalized == "face" or class_id == 1:
+    if normalized == "face":
         return "face"
-    return normalized or f"class_{class_id}"
+    return display_label or f"class_{class_id}"

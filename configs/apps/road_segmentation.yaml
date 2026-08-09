@@ -1,12 +1,15 @@
 application:
   name: Road Segmentation
+  pipeline: segmentation
   enabled: false
 
 source:
   name: parking_area
 
-segmenter:
-  model: core/models/segmentation/road_segmentation.onnx
+primary_model:
+  name: road_segmentation
+  task: segmentation
+  model: models/segmentation/road/model.onnx
   backend: onnxruntime
   device: auto
   providers: []

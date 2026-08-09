@@ -1,12 +1,15 @@
 application:
   name: Pose Estimation
+  pipeline: pose
   enabled: false
 
 source:
   name: office_entrance
 
-pose_model:
-  model: core/models/pose/pose_estimation.onnx
+primary_model:
+  name: pose_estimation
+  task: pose
+  model: models/pose/pose_estimation/model.onnx
   backend: onnxruntime
   device: auto
   providers: []

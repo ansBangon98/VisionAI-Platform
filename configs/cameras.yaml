@@ -35,20 +35,16 @@ sources:
     usb_format: raw
     display_sink: ximagesink
     inference:
-      fps: 5
+      fps: 30
       width: 640
       height: 0
 
-  usb_camera_1:
-    label: USB Camera 1
-    type: usb
-    device: 1
-    width: 1920
-    height: 1080
-    fps: 30
-    usb_format: raw
+  video_file_0:
+    label: Test MP4 Video
+    type: file
+    path: /home/ansari/Documents/dataset/detection/train.mp4
     display_sink: ximagesink
     inference:
-      fps: 5
+      fps: 15
       width: 640
       height: 0

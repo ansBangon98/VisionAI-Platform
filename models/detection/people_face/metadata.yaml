@@ -1,0 +1,52 @@
+name: people_face_detector
+task: detection
+model_type: yolo
+base_model: yolo11n
+version: yolo11n_people_face_cctv_v3
+
+artifacts:
+  onnx: model.onnx
+  openvino_xml: model.xml
+  openvino_bin: model.bin
+  labels: labels.txt
+
+input:
+  width: 640
+  height: 640
+  channels: 3
+  color_format: RGB
+
+preprocessing:
+  resize: letterbox
+  normalization: scale_0_1
+
+classes: [person, face]
+
+confidence_threshold: 0.25
+iou_threshold: 0.45
+
+output:
+  format: ultralytics_yolo
+  bbox_format: xywh_center
+
+export:
+  exporter: Ultralytics
+  date: '2026-08-06T03:07:52.100018+00:00'
+  ultralytics_version: 8.4.115
+  license: AGPL-3.0 License (https://ultralytics.com/license)
+  docs: https://docs.ultralytics.com
+  stride: 32
+  head: Detect
+  batch: 1
+  imgsz: [640, 640]
+  names:
+    0: person
+    1: face
+  args:
+    data: null
+    batch: 1
+    fraction: 1.0
+    quantize: 16
+    dynamic: false
+    nms: false
+  end2end: false

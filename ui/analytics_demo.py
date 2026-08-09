@@ -543,12 +543,15 @@ class MainWindow(QMainWindow):
 
     def create_app_runtime(self, app: AppDefinition):
         try:
-            pipeline_module = importlib.import_module(f"apps.{app.key}.pipeline")
+            pipeline_module = importlib.import_module(
+                f"apps.{app.pipeline_type}.pipeline"
+            )
         except RuntimeError:
             raise
         except Exception as error:
             raise RuntimeError(
-                f"Failed to import {app.name} pipeline: {error}"
+                f"Failed to import {app.name} pipeline "
+                f"'{app.pipeline_type}': {error}"
             ) from error
 
         create_pipeline = getattr(pipeline_module, "create_pipeline_from_config", None)
@@ -568,23 +571,31 @@ class MainWindow(QMainWindow):
         return pipeline, analytics
 
     def create_app_analytics(self, app: AppDefinition):
-        try:
-            analytics_module = importlib.import_module(f"apps.{app.key}.analytics")
-        except ModuleNotFoundError as error:
-            if error.name == f"apps.{app.key}.analytics":
-                return ObjectCountAnalytics()
-            raise
+        for module_key in dict.fromkeys((app.key, app.pipeline_type)):
+            analytics_module = self.import_optional_analytics_module(module_key)
+            if analytics_module is None:
+                continue
 
-        for class_name in (
-            "Analytics",
-            f"{self.class_name_from_key(app.key)}Analytics",
-            "PeopleAnalytics",
-        ):
-            analytics_class = getattr(analytics_module, class_name, None)
-            if analytics_class is not None:
-                return analytics_class()
+            for class_name in (
+                "Analytics",
+                f"{self.class_name_from_key(app.key)}Analytics",
+                f"{self.class_name_from_key(module_key)}Analytics",
+                "PeopleAnalytics",
+            ):
+                analytics_class = getattr(analytics_module, class_name, None)
+                if analytics_class is not None:
+                    return analytics_class()
 
         return ObjectCountAnalytics()
+
+    def import_optional_analytics_module(self, module_key: str):
+        module_name = f"apps.{module_key}.analytics"
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError as error:
+            if error.name in {f"apps.{module_key}", module_name}:
+                return None
+            raise
 
     def class_name_from_key(self, key: str) -> str:
         return "".join(part.capitalize() for part in key.split("_"))
@@ -624,9 +635,9 @@ class MainWindow(QMainWindow):
 
     @Slot(object, object, object)
     def update_analytics_results(self, results, summary, source_size=None):
-        current_count = summary.get("current_people")
+        current_count = summary.get("current_objects")
         if current_count is None:
-            current_count = summary.get("current_objects", len(results or []))
+            current_count = summary.get("current_people", len(results or []))
         self.lbl_Objects.setText(str(int(current_count)))
         self.update_video_overlays(results, source_size)
 

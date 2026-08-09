@@ -1,0 +1,49 @@
+application:
+  name: Detection Demo
+  pipeline: detection
+
+source:
+  name: video_file_0
+
+primary_model:
+  name: demo_object_detector
+  task: detection
+  model: models/detection/demo_detection/model.xml
+  backend: openvino
+  # Supported backend values: onnxruntime, openvino, pytorch, tensorrt.
+  # TensorRT uses a serialized engine file such as .engine, not the .onnx file.
+  device: CPU
+  providers: []
+  performance_hint: LATENCY
+  confidence_threshold: 0.25
+  nms_iou_threshold: 0.45
+  input_size: [640, 640]
+  input_shape: [1, 3, 640, 640]
+  detect_class_ids: []
+
+tracker:
+  type: bytetrack
+  track_thresh: 0.5
+  match_thresh: 0.8
+  track_buffer: 30
+  frame_rate: 30
+
+analytics:
+  enabled: false
+
+secondary_models:
+  gender:
+    enabled: false
+    task: classification
+    model: models/classification/gender/model.xml
+    backend: openvino
+    device: CPU
+    operate_on_classes: []
+
+  emotion:
+    enabled: false
+    task: classification
+    model: models/classification/emotion/model.xml
+    backend: openvino
+    device: CPU
+    operate_on_classes: []

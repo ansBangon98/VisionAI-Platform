@@ -4,3 +4,7 @@ PyGObject
 numpy<2
 scipy
 openvino
+torch
+torchvision
+ultralytics
+albumentations

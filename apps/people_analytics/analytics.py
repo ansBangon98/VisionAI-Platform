@@ -15,14 +15,18 @@ class PeopleAnalytics:
 
     def update(self, tracks: Sequence[object] | FrameResult) -> dict[str, int]:
         if isinstance(tracks, FrameResult):
+            detections = tracks.detections
             return {
+                "current_objects": len(detections),
                 "current_people": sum(
-                    1 for detection in tracks.detections if _is_person(detection)
+                    1 for detection in detections if _is_person(detection)
                 ),
             }
 
+        items = list(tracks)
         return {
-            "current_people": sum(1 for track in tracks if _is_person(track)),
+            "current_objects": len(items),
+            "current_people": sum(1 for track in items if _is_person(track)),
         }
 
 
@@ -30,10 +34,10 @@ def _is_person(track: object) -> bool:
     label = getattr(track, "label", None)
     class_id = getattr(track, "class_id", None)
     if label is not None or class_id is not None:
-        return str(label or "").lower() in {"person", "people"} or class_id == 0
+        return str(label or "").lower() in {"person", "people"}
 
     if not isinstance(track, Mapping):
-        return True
+        return False
 
-    item_type = str(track.get("type", track.get("label", "person"))).lower()
+    item_type = str(track.get("type", track.get("label", ""))).lower()
     return item_type in {"person", "people"}

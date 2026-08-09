@@ -4,6 +4,8 @@ import os
 import sys
 import time
 
+import cairo
+
 os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
 import argparse
@@ -334,33 +336,60 @@ def _overlay_rect(
 
 
 def _overlay_color(overlay: object) -> QColor:
-    item_type = str(
-        _overlay_value(overlay, "type")
-        or _overlay_value(overlay, "label")
-        or ""
-    ).lower()
-    class_id = _overlay_value(overlay, "class_id")
+    item_type = _overlay_caption(overlay).lower()
 
-    if item_type in {"person", "people"} or class_id == 0:
+    if item_type in {"person", "people"}:
         return QColor("#7DD3FC")
-    if item_type == "face" or class_id == 1:
+    if item_type == "face":
         return QColor("#86EFAC")
-    return QColor("#FDE68A")
+
+    palette = (
+        "#FDE68A",
+        "#FDA4AF",
+        "#C4B5FD",
+        "#67E8F9",
+        "#FDBA74",
+        "#BEF264",
+        "#F0ABFC",
+        "#93C5FD",
+    )
+    return QColor(palette[_overlay_class_index(overlay) % len(palette)])
 
 
 def _overlay_rgba(overlay: object) -> tuple[float, float, float, float]:
-    item_type = str(
-        _overlay_value(overlay, "type")
-        or _overlay_value(overlay, "label")
-        or ""
-    ).lower()
-    class_id = _overlay_value(overlay, "class_id")
+    item_type = _overlay_caption(overlay).lower()
 
-    if item_type in {"person", "people"} or class_id == 0:
+    if item_type in {"person", "people"}:
         return 0.49, 0.83, 0.99, 1.0
-    if item_type == "face" or class_id == 1:
+    if item_type == "face":
         return 0.53, 0.94, 0.67, 1.0
-    return 0.99, 0.90, 0.54, 1.0
+
+    palette = (
+        (0.99, 0.90, 0.54, 1.0),
+        (0.99, 0.64, 0.69, 1.0),
+        (0.77, 0.71, 0.99, 1.0),
+        (0.40, 0.91, 0.98, 1.0),
+        (0.99, 0.73, 0.45, 1.0),
+        (0.75, 0.95, 0.39, 1.0),
+        (0.94, 0.67, 0.99, 1.0),
+        (0.58, 0.77, 0.99, 1.0),
+    )
+    return palette[_overlay_class_index(overlay) % len(palette)]
+
+
+def _overlay_caption(overlay: object) -> str:
+    return str(
+        _overlay_value(overlay, "label")
+        or _overlay_value(overlay, "type")
+        or f"class_{_overlay_class_index(overlay)}"
+    ).strip()
+
+
+def _overlay_class_index(overlay: object) -> int:
+    try:
+        return int(_overlay_value(overlay, "class_id") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _overlay_value(overlay: object, key: str):
@@ -580,6 +609,20 @@ class GStreamerCamera(QObject):
             context.rectangle(x1, y1, x2 - x1, y2 - y1)
             context.stroke()
 
+            caption = _overlay_caption(overlay)
+
+            # Label
+            context.set_source_rgba(red, green, blue, alpha)
+            context.select_font_face(
+                "Sans",
+                cairo.FONT_SLANT_NORMAL,
+                cairo.FONT_WEIGHT_BOLD
+            )
+            context.set_font_size(20)
+
+            context.move_to(x1, y1 - 5)
+            context.show_text(caption)
+
     def _inference_caps(self) -> str:
         values = [
             "video/x-raw",
@@ -595,6 +638,7 @@ class GStreamerCamera(QObject):
     def _create_video_sink_bin(self):
         sink_bin = Gst.Bin.new("analytics_video_sink_bin")
         input_queue = self._make_queue("analytics_input_queue")
+        orientation_filter = self._create_orientation_filter()
         tee = self._make_element("tee", "analytics_tee")
 
         display_queue = self._make_queue("display_queue")
@@ -614,9 +658,13 @@ class GStreamerCamera(QObject):
         infer_convert = self._make_element("videoconvert", "infer_convert")
         self.appsink = self._create_appsink()
 
+        pre_tee_elements = [input_queue]
+        if orientation_filter is not None:
+            pre_tee_elements.append(orientation_filter)
+        pre_tee_elements.append(tee)
+
         elements = [
-            input_queue,
-            tee,
+            *pre_tee_elements,
             display_queue,
             display_convert,
             display_caps,
@@ -631,7 +679,7 @@ class GStreamerCamera(QObject):
         for element in elements:
             sink_bin.add(element)
 
-        self._link_many(input_queue, tee)
+        self._link_many(*pre_tee_elements)
         self._link_many(
             display_queue,
             display_convert,
@@ -656,6 +704,14 @@ class GStreamerCamera(QObject):
         self._set_video_window_handle()
         return sink_bin
 
+    def _create_orientation_filter(self):
+        element = Gst.ElementFactory.make("videoflip", "auto_orientation")
+        if element is None:
+            return None
+
+        self._set_property_if_available(element, "video-direction", "auto")
+        return element
+
     def _make_queue(
         self,
         name: str,
@@ -673,11 +729,12 @@ class GStreamerCamera(QObject):
 
     def _create_display_sink(self):
         factories = _display_sink_candidates(self.config.display_sink)
+        sync_to_clock = self.config.source == "video_file"
         for factory in factories:
             sink = Gst.ElementFactory.make(factory, "display_sink")
             if sink is None:
                 continue
-            self._set_property_if_available(sink, "sync", False)
+            self._set_property_if_available(sink, "sync", sync_to_clock)
             self._set_property_if_available(sink, "force-aspect-ratio", True)
             if factory != "autovideosink":
                 return sink
@@ -810,7 +867,7 @@ class GStreamerCamera(QObject):
 
         try:
             element.set_property(name, value)
-        except TypeError:
+        except (TypeError, ValueError):
             return
 
     def _build_usb_pipeline(self):

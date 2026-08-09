@@ -1,12 +1,15 @@
 application:
   name: Vehicle Analytics
+  pipeline: detection
   enabled: false
 
 source:
   name: parking_area
 
-detector:
-  model: core/models/detection/vehicle_yolo11n.onnx
+primary_model:
+  name: vehicle_detector
+  task: detection
+  model: models/detection/vehicle/model.onnx
   backend: onnxruntime
   device: auto
   providers: []
@@ -14,6 +17,8 @@ detector:
   nms_iou_threshold: 0.45
   input_size: [640, 640]
   input_shape: [1, 3, 640, 640]
+
+secondary_models: {}
 
 tracker:
   type: bytetrack
