@@ -1,8 +1,8 @@
 import numpy as np
 
-from .kalman_filter import KalmanFilter
-from . import matching
-from .basetrack import BaseTrack, TrackState
+from core.tracking.bytetrack.kalman_filter import KalmanFilter
+import core.tracking.bytetrack.matching as matching
+from core.tracking.bytetrack.basetrack import BaseTrack, TrackState
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
@@ -10,6 +10,7 @@ class STrack(BaseTrack):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=float)
+        self.detection_tlbr = self.tlwh_to_tlbr(self._tlwh)
         self.kalman_filter = None
         self.mean, self.covariance = None, None
         self.is_activated = False
@@ -61,6 +62,7 @@ class STrack(BaseTrack):
         if new_id:
             self.track_id = self.next_id()
         self.score = new_track.score
+        self.detection_tlbr = new_track.detection_tlbr.copy()
 
     def update(self, new_track, frame_id):
         """
@@ -80,6 +82,7 @@ class STrack(BaseTrack):
         self.is_activated = True
 
         self.score = new_track.score
+        self.detection_tlbr = new_track.detection_tlbr.copy()
 
     @property
     # @jit(nopython=True)

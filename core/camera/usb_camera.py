@@ -13,6 +13,7 @@ class USBCamera(BaseCamera):
     height: int = 720
     fps: int = 30
     usb_format: str = "raw"
+    usb_pixel_format: str = ""
     inference_fps: int = 5
     inference_width: int = 640
     inference_height: int = 0
@@ -25,7 +26,8 @@ class USBCamera(BaseCamera):
             width=int(self.width),
             height=int(self.height),
             fps=int(self.fps),
-            usb_format=self.usb_format,
+            usb_format=str(self.usb_format).lower(),
+            usb_pixel_format=str(self.usb_pixel_format).strip(),
             inference_fps=int(self.inference_fps),
             inference_width=int(self.inference_width),
             inference_height=int(self.inference_height),

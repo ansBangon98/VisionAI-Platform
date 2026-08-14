@@ -44,6 +44,12 @@ class CameraFactory:
                 height=int(config.get("height", 720)),
                 fps=int(config.get("fps", 30)),
                 usb_format=str(config.get("usb_format", "raw")),
+                usb_pixel_format=str(
+                    config.get(
+                        "usb_pixel_format",
+                        config.get("pixel_format", config.get("raw_format", "")),
+                    )
+                ),
                 reconnect=reconnect,
                 display_sink=display_sink,
                 **inference_config,

@@ -8,7 +8,7 @@ sources:
     reconnect: true
     display_sink: ximagesink
     inference:
-      fps: 15
+      fps: 30
       width: 640
       height: 0
 
@@ -21,7 +21,7 @@ sources:
     reconnect: true
     display_sink: ximagesink
     inference:
-      fps: 15
+      fps: 30
       width: 640
       height: 0
 
@@ -32,7 +32,7 @@ sources:
     width: 640
     height: 480
     fps: 30
-    usb_format: raw
+    usb_format: mjpeg
     display_sink: ximagesink
     inference:
       fps: 30
@@ -40,11 +40,41 @@ sources:
       height: 0
 
   video_file_0:
-    label: Test MP4 Video
+    label: Object Detection
     type: file
     path: /home/ansari/Documents/dataset/detection/train.mp4
     display_sink: ximagesink
     inference:
-      fps: 15
+      fps: 30
+      width: 640
+      height: 0
+  
+  video_file_1:
+    label: People Demo 1
+    type: file
+    path: /home/ansari/Videos/Demo1.mkv
+    display_sink: ximagesink
+    inference:
+      fps: 30
+      width: 640
+      height: 0
+
+  video_file_2:
+    label: People Demo 2
+    type: file
+    path: /home/ansari/Videos/Demo2.mkv
+    display_sink: ximagesink
+    inference:
+      fps: 30
+      width: 640
+      height: 0
+
+  video_file_3:
+    label: People Demo 3
+    type: file
+    path: /home/ansari/Videos/Demo3.mkv
+    display_sink: ximagesink
+    inference:
+      fps: 30
       width: 640
       height: 0

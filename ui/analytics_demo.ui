@@ -167,7 +167,7 @@
           <string notr="true">color: #9F9FA9;</string>
          </property>
          <property name="text">
-          <string>Vision Analytics</string>
+          <string>VisionAI-Platform</string>
          </property>
         </widget>
         <widget class="QComboBox" name="cbo_selected_test">
@@ -2294,7 +2294,7 @@ padding-left:15px;</string>
            <property name="minimumSize">
             <size>
              <width>0</width>
-             <height>80</height>
+             <height>145</height>
             </size>
            </property>
            <property name="maximumSize">
@@ -2304,8 +2304,10 @@ padding-left:15px;</string>
             </size>
            </property>
            <property name="styleSheet">
-            <string notr="true">background-color:#1e222b;
-border-radius: 10px;</string>
+            <string notr="true">#frame_18{
+	background-color:#1e222b;
+	border-radius: 10px;
+}</string>
            </property>
            <property name="frameShape">
             <enum>QFrame::Shape::StyledPanel</enum>
@@ -2383,7 +2385,7 @@ padding-left:5px;</string>
              </widget>
             </item>
             <item>
-             <widget class="QFrame" name="frame_39">
+             <widget class="QFrame" name="frm_analytics_summary">
               <property name="frameShape">
                <enum>QFrame::Shape::StyledPanel</enum>
               </property>
@@ -2400,7 +2402,7 @@ padding-left:5px;</string>
            <property name="minimumSize">
             <size>
              <width>0</width>
-             <height>80</height>
+             <height>145</height>
             </size>
            </property>
            <property name="maximumSize">
@@ -2410,8 +2412,10 @@ padding-left:5px;</string>
             </size>
            </property>
            <property name="styleSheet">
-            <string notr="true">background-color:#1e222b;
-border-radius: 10px;</string>
+            <string notr="true">#frame_19{
+	background-color:#1e222b;
+	border-radius: 10px;
+}</string>
            </property>
            <property name="frameShape">
             <enum>QFrame::Shape::StyledPanel</enum>
@@ -2489,7 +2493,7 @@ padding-left:5px;</string>
              </widget>
             </item>
             <item>
-             <widget class="QFrame" name="frame_40">
+             <widget class="QFrame" name="frm_detection_result">
               <property name="frameShape">
                <enum>QFrame::Shape::StyledPanel</enum>
               </property>
@@ -2530,7 +2534,7 @@ padding-left:5px;</string>
            <property name="minimumSize">
             <size>
              <width>0</width>
-             <height>80</height>
+             <height>145</height>
             </size>
            </property>
            <property name="maximumSize">
@@ -2540,8 +2544,10 @@ padding-left:5px;</string>
             </size>
            </property>
            <property name="styleSheet">
-            <string notr="true">background-color:#1e222b;
-border-radius: 10px;</string>
+            <string notr="true">#frame_21{
+	background-color:#1e222b;
+	border-radius: 10px;
+}</string>
            </property>
            <property name="frameShape">
             <enum>QFrame::Shape::StyledPanel</enum>
@@ -2619,7 +2625,7 @@ padding-left:5px;</string>
              </widget>
             </item>
             <item>
-             <widget class="QFrame" name="frame_41">
+             <widget class="QFrame" name="frm_event_history">
               <property name="frameShape">
                <enum>QFrame::Shape::StyledPanel</enum>
               </property>
@@ -2636,7 +2642,7 @@ padding-left:5px;</string>
            <property name="minimumSize">
             <size>
              <width>0</width>
-             <height>80</height>
+             <height>145</height>
             </size>
            </property>
            <property name="maximumSize">
@@ -2646,8 +2652,10 @@ padding-left:5px;</string>
             </size>
            </property>
            <property name="styleSheet">
-            <string notr="true">background-color:#1e222b;
-border-radius: 10px;</string>
+            <string notr="true">#frame_20{
+	background-color:#1e222b;
+	border-radius: 10px;
+}</string>
            </property>
            <property name="frameShape">
             <enum>QFrame::Shape::StyledPanel</enum>
@@ -2725,7 +2733,7 @@ padding-left:5px;</string>
              </widget>
             </item>
             <item>
-             <widget class="QFrame" name="frame_42">
+             <widget class="QFrame" name="frm_session_stats">
               <property name="frameShape">
                <enum>QFrame::Shape::StyledPanel</enum>
               </property>

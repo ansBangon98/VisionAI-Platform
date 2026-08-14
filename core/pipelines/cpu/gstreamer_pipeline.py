@@ -413,6 +413,20 @@ def _display_sink_candidates(preferred: str) -> tuple[str, ...]:
     return tuple(candidates)
 
 
+def _normalize_usb_pixel_format(value: str) -> str:
+    normalized = str(value or "").strip().upper().replace("-", "_")
+    if normalized in {"", "ANY", "AUTO", "DEFAULT"}:
+        return ""
+
+    aliases = {
+        "YUYV": "YUY2",
+        "RGB3": "RGB",
+        "BGR3": "BGR",
+        "GREY": "GRAY8",
+    }
+    return aliases.get(normalized, normalized)
+
+
 def _implements_video_overlay(element) -> bool:
     if GstVideo is None:
         return False
@@ -545,12 +559,14 @@ class GStreamerCamera(QObject):
 
     def _create_appsink(self):
         appsink = self._make_element("appsink", "infer_sink")
+        sync_to_clock = self._sync_inference_to_clock()
         appsink.set_property("caps", Gst.Caps.from_string(self._inference_caps()))
         appsink.set_property("emit-signals", True)
-        appsink.set_property("sync", False)
+        appsink.set_property("sync", sync_to_clock)
         appsink.set_property("max-buffers", 1)
-        self._set_property_if_available(appsink, "drop", True)
-        self._set_property_if_available(appsink, "leaky-type", "downstream")
+        self._set_property_if_available(appsink, "drop", not sync_to_clock)
+        if not sync_to_clock:
+            self._set_property_if_available(appsink, "leaky-type", "downstream")
         appsink.connect("new-sample", self._on_new_sample)
         return appsink
 
@@ -650,7 +666,7 @@ class GStreamerCamera(QObject):
 
         infer_queue = self._make_queue(
             "infer_queue",
-            leaky=True,
+            leaky=not self._sync_inference_to_clock(),
             max_size_buffers=1,
         )
         videorate = self._make_element("videorate", "infer_videorate")
@@ -729,7 +745,7 @@ class GStreamerCamera(QObject):
 
     def _create_display_sink(self):
         factories = _display_sink_candidates(self.config.display_sink)
-        sync_to_clock = self.config.source == "video_file"
+        sync_to_clock = self._sync_inference_to_clock()
         for factory in factories:
             sink = Gst.ElementFactory.make(factory, "display_sink")
             if sink is None:
@@ -870,10 +886,14 @@ class GStreamerCamera(QObject):
         except (TypeError, ValueError):
             return
 
+    def _sync_inference_to_clock(self) -> bool:
+        return self.config.source == "video_file"
+
     def _build_usb_pipeline(self):
         pipeline = Gst.Pipeline.new("usb_camera_pipeline")
         source = self._make_element("v4l2src", "usb_source")
         input_caps = self._make_element("capsfilter", "usb_input_caps")
+        decode_convert = self._make_element("videoconvert", "usb_decode_convert")
         video_sink = self._create_video_sink_bin()
 
         source.set_property("device", self.config.usb_device)
@@ -881,9 +901,10 @@ class GStreamerCamera(QObject):
 
         elements = [source, input_caps]
 
-        if self.config.usb_format == "mjpeg":
+        if str(self.config.usb_format or "raw").lower() == "mjpeg":
             elements.append(self._make_element("jpegdec", "jpeg_decoder"))
 
+        elements.append(decode_convert)
         elements.append(video_sink)
 
         for element in elements:
@@ -894,11 +915,20 @@ class GStreamerCamera(QObject):
         return pipeline
 
     def _usb_input_caps(self) -> str:
-        media_type = "image/jpeg" if self.config.usb_format == "mjpeg" else "video/x-raw"
-        return (
-            f"{media_type},width={self.config.width},height={self.config.height},"
-            f"framerate={self.config.fps}/1"
-        )
+        usb_format = str(self.config.usb_format or "raw").lower()
+        media_type = "image/jpeg" if usb_format == "mjpeg" else "video/x-raw"
+        values = [
+            media_type,
+            f"width={self.config.width}",
+            f"height={self.config.height}",
+            f"framerate={self.config.fps}/1",
+        ]
+
+        pixel_format = _normalize_usb_pixel_format(self.config.usb_pixel_format)
+        if media_type == "video/x-raw" and pixel_format:
+            values.insert(1, f"format={pixel_format}")
+
+        return ",".join(values)
 
     def _on_new_sample(self, sink):
         sample_started_at = time.perf_counter()
@@ -1055,6 +1085,7 @@ class CameraViewerWidget(QWidget):
         height: int = 480,
         fps: int = 30,
         usb_format: str = "raw",
+        usb_pixel_format: str = "",
     ):
         self.start(
             CameraConfig(
@@ -1064,6 +1095,7 @@ class CameraViewerWidget(QWidget):
                 height=height,
                 fps=fps,
                 usb_format=usb_format,
+                usb_pixel_format=usb_pixel_format,
             )
         )
 
@@ -1169,6 +1201,8 @@ class StandaloneCameraWindow(QMainWindow):
         self.usb_format_selector = QComboBox()
         self.usb_format_selector.addItem("Raw", "raw")
         self.usb_format_selector.addItem("MJPEG", "mjpeg")
+        self.usb_pixel_format_input = QLineEdit(config.usb_pixel_format)
+        self.usb_pixel_format_input.setPlaceholderText("auto, YUY2, NV12")
 
         self.rtsp_uri_input = QLineEdit(config.rtsp_uri)
         self.rtsp_uri_input.setPlaceholderText("rtsp://username:password@host:554/stream")
@@ -1211,6 +1245,7 @@ class StandaloneCameraWindow(QMainWindow):
         form.addRow("RTSP transport", self.transport_selector)
         form.addRow("USB device", self.usb_device_input)
         form.addRow("USB format", self.usb_format_selector)
+        form.addRow("USB pixel format", self.usb_pixel_format_input)
         form.addRow("Width", self.width_input)
         form.addRow("Height", self.height_input)
         form.addRow("FPS", self.fps_input)
@@ -1238,6 +1273,7 @@ class StandaloneCameraWindow(QMainWindow):
         self._set_combo_data(self.source_selector, config.source)
         self._set_combo_data(self.usb_format_selector, config.usb_format)
         self._set_combo_data(self.transport_selector, config.rtsp_transport)
+        self.usb_pixel_format_input.setText(config.usb_pixel_format)
 
     def _set_combo_data(self, combo: QComboBox, value: str):
         index = combo.findData(value)
@@ -1260,6 +1296,7 @@ class StandaloneCameraWindow(QMainWindow):
         self.transport_selector.setEnabled(is_rtsp)
         self.usb_device_input.setEnabled(not is_rtsp)
         self.usb_format_selector.setEnabled(not is_rtsp)
+        self.usb_pixel_format_input.setEnabled(not is_rtsp)
         self.width_input.setEnabled(not is_rtsp)
         self.height_input.setEnabled(not is_rtsp)
         self.fps_input.setEnabled(not is_rtsp)
@@ -1295,6 +1332,7 @@ class StandaloneCameraWindow(QMainWindow):
             height=self.height_input.value(),
             fps=self.fps_input.value(),
             usb_format=self.usb_format_selector.currentData(),
+            usb_pixel_format=self.usb_pixel_format_input.text().strip(),
             rtsp_latency=self.latency_input.value(),
             rtsp_transport=self.transport_selector.currentData(),
         )
@@ -1317,6 +1355,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rtsp-transport", choices=("tcp", "udp"), default="tcp")
     parser.add_argument("--usb-device", default="/dev/video0")
     parser.add_argument("--usb-format", choices=("raw", "mjpeg"), default="raw")
+    parser.add_argument("--usb-pixel-format", default="")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--fps", type=int, default=30)
@@ -1337,6 +1376,7 @@ def main(argv: list[str] | None = None) -> int:
             height=args.height,
             fps=args.fps,
             usb_format=args.usb_format,
+            usb_pixel_format=args.usb_pixel_format,
             rtsp_latency=args.rtsp_latency,
             rtsp_transport=args.rtsp_transport,
         ),

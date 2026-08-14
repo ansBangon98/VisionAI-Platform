@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +25,7 @@ from core.tracking.bytetrack.byte_tracker import BYTETracker
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "apps" / "people_analytics.yaml"
 DEFAULT_SETTINGS_PATH = PROJECT_ROOT / "configs" / "settings.yaml"
+MIN_TRACK_DETECTION_IOU = 0.10
 
 
 @dataclass(frozen=True)
@@ -163,13 +164,19 @@ class ByteTrackPeopleTracker:
             img_info=(frame_height, frame_width),
             img_size=(frame_height, frame_width),
         )
-        return [
-            TrackResult(
-                track_id=int(track.track_id),
-                bbox=_clip_bbox(track.tlbr, frame_width, frame_height),
+        track_results: list[TrackResult] = []
+        for track in tracks:
+            bbox = _track_realtime_bbox(track, frame_width, frame_height)
+            if bbox is None:
+                continue
+
+            track_results.append(
+                TrackResult(
+                    track_id=int(track.track_id),
+                    bbox=bbox,
+                )
             )
-            for track in tracks
-        ]
+        return track_results
 
 
 class PeopleAnalyticsPipeline:
@@ -339,7 +346,8 @@ def create_pipeline_from_config(
         tracker=tracker,
         people_class_ids=people_class_ids,
         face_class_ids=face_class_ids,
-        class_labels=load_class_labels(model_path),
+        class_labels=_configured_class_labels(detector_config)
+        or load_class_labels(model_path),
         secondary_models=SecondaryModelManager.from_config(config),
         source_id=_source_id_from_config(config),
     )
@@ -471,6 +479,17 @@ def _result_bbox(bbox: Sequence[float]) -> BoundingBox:
     )
 
 
+def _track_realtime_bbox(
+    track: object,
+    frame_width: int,
+    frame_height: int,
+) -> tuple[int, int, int, int] | None:
+    bbox = getattr(track, "detection_tlbr", None)
+    if bbox is None:
+        return None
+    return _clip_bbox(bbox, frame_width, frame_height)
+
+
 def _track_source_detection(
     track_bbox: Sequence[float],
     detections: Sequence[Detection],
@@ -484,7 +503,7 @@ def _track_source_detection(
         return None
 
     best_index = int(np.argmax(ious))
-    if float(ious[best_index]) <= 0:
+    if float(ious[best_index]) < MIN_TRACK_DETECTION_IOU:
         return None
     return detections[best_index]
 
@@ -545,3 +564,47 @@ def _as_optional_int_sequence(value: object) -> tuple[int, ...] | None:
     if value in (None, ""):
         return None
     return _as_int_sequence(value)
+
+
+def _configured_class_labels(config: Mapping[str, Any]) -> dict[int, str]:
+    for key in ("classes", "names", "labels"):
+        labels = _normalize_class_labels(config.get(key))
+        if labels:
+            return labels
+    return {}
+
+
+def _normalize_class_labels(value: object) -> dict[int, str]:
+    if isinstance(value, Mapping):
+        labels: dict[int, str] = {}
+        for raw_class_id, raw_label in value.items():
+            try:
+                class_id = int(raw_class_id)
+            except (TypeError, ValueError):
+                continue
+
+            label = str(raw_label).strip()
+            if label:
+                labels[class_id] = label
+        return labels
+
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        return {
+            index: str(label).strip()
+            for index, label in enumerate(value)
+            if str(label).strip()
+        }
+
+    if isinstance(value, str):
+        return {
+            index: label
+            for index, label in enumerate(
+                part.strip() for part in value.split(",")
+            )
+            if label
+        }
+
+    return {}

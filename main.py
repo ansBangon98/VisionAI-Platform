@@ -7,7 +7,7 @@ import platform
 
 from ui.analytics_demo import main
 
-APP_DIR_NAME = "VisionAnalytics"
+APP_DIR_NAME = "VisionAI-Platform"
 
 currplatform = platform.system().lower()
 _IS_WINDOWS = currplatform == "windows"

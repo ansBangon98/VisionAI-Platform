@@ -1,14 +1,14 @@
 application:
-  name: People Analytics
+  name: People Detection Demo
   pipeline: detection
 
 source:
-  name: video_file_0
+  name: video_file_1
 
 primary_model:
   name: people_face_detector
   task: detection
-  model: models/detection/people_face/model.xml
+  model: models/detection/people_facev2/best.xml
   backend: openvino
   # Supported backend values: onnxruntime, openvino, pytorch, tensorrt.
   # TensorRT uses a serialized engine file such as .engine, not the .onnx file.
@@ -33,6 +33,65 @@ analytics:
     enabled: true
     people_class_ids: [0]
     face_class_ids: [1]
+
+dashboard:
+  analytics_summary:
+    enabled: true
+    metrics:
+      - key: person_count
+        label: Person count
+        type: progress
+        max: 30
+        color: "#6697f5"
+        format: count
+      - key: current_faces
+        label: Face count
+        type: progress
+        max: 30
+        color: "#9f7aea"
+        format: count
+      - key: entries
+        label: Entries
+        type: progress
+        max: 50
+        color: "#69c29b"
+        format: count
+      - key: exits
+        label: Exits
+        type: progress
+        max: 50
+        color: "#edb34e"
+        format: count
+      - key: avg_dwell_time
+        label: Avg. dwell time
+        type: text
+        format: seconds
+
+  event_history:
+    enabled: true
+    max_items: 10
+    events:
+      - person_entered
+      - person_exited
+      - zone_entered
+
+  detection_results:
+    enabled: true
+    max_items: 10
+    columns:
+      - track_id
+      - class
+      - confidence
+      - gender
+      - emotion
+
+  session_stats:
+    enabled: true
+    metrics:
+      - fps
+      - inference_ms
+      - frames_processed
+      - session_duration
 
 secondary_models:
   gender:

@@ -12,6 +12,7 @@ class CameraConfig:
     height: int = 480
     fps: int = 30
     usb_format: str = "raw"
+    usb_pixel_format: str = ""
     rtsp_latency: int = 200
     rtsp_transport: str = "tcp"
     file_path: str = ""

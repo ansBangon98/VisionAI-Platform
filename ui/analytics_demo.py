@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from PySide6.QtWidgets import (
@@ -22,6 +23,8 @@ from core.camera.camera_config import CameraMetrics
 from core.pipelines.cpu.frame_processor import frame_result_to_legacy_objects
 from core.pipelines.cpu.gstreamer_pipeline import attach_camera_viewer
 from core.results.frame_result import FrameResult
+from ui.controllers import DashboardController
+from ui.views import DashboardView
 
 
 try:
@@ -53,6 +56,8 @@ class AnalyticsWorker(QObject):
 
     @Slot(QImage)
     def process_frame(self, frame: QImage):
+        started_at = time.perf_counter()
+        frame_result = None
         try:
             frame_result = self.process_frame_result(frame)
             if frame_result is not None:
@@ -61,6 +66,8 @@ class AnalyticsWorker(QObject):
             else:
                 results = self.pipeline.process(frame)
                 summary = self.analytics.update(results)
+            summary = self.normalized_summary(summary)
+            self.add_runtime_summary(summary, results, frame_result, started_at)
             source_size = (frame.width(), frame.height())
             self.results_ready.emit(results, summary, source_size)
         except RuntimeError as error:
@@ -84,6 +91,38 @@ class AnalyticsWorker(QObject):
                 f"{self.app_name} returned {type(result).__name__}; expected FrameResult."
             )
         return result
+
+    def normalized_summary(self, summary) -> dict:
+        if isinstance(summary, dict):
+            return dict(summary)
+        if summary is None:
+            return {}
+        if hasattr(summary, "__dict__"):
+            return dict(vars(summary))
+        return {}
+
+    def add_runtime_summary(
+        self,
+        summary: dict,
+        results,
+        frame_result: FrameResult | None,
+        started_at: float,
+    ) -> None:
+        processing_ms = (time.perf_counter() - started_at) * 1000.0
+        summary.setdefault("current_objects", len(results or []))
+        summary.setdefault("processing_ms", processing_ms)
+
+        if frame_result is None:
+            summary.setdefault("inference_ms", processing_ms)
+            return
+
+        summary.setdefault("frame_number", frame_result.frame_number)
+        if frame_result.fps is not None:
+            summary.setdefault("fps", frame_result.fps)
+        if frame_result.inference_ms is not None:
+            summary.setdefault("inference_ms", frame_result.inference_ms)
+        else:
+            summary.setdefault("inference_ms", processing_ms)
 
 
 class ObjectCountAnalytics:
@@ -112,9 +151,11 @@ class MainWindow(QMainWindow):
         self._analytics_enabled = False
         self._analytics_thread = None
         self._analytics_worker = None
+        self.dashboard_view = None
+        self.dashboard_controller = None
 
-        self.setWindowTitle("Vision Analytics")
-        self.setGeometry(100, 100, 862, 875)
+        self.setWindowTitle("VisionAI-Platform")
+        self.setGeometry(100, 100, 1246, 900)
         self.initUI()
 
     def initUI(self):
@@ -134,6 +175,7 @@ class MainWindow(QMainWindow):
             self.performance_metrics()
             self.setup_right_aligned_header_widgets()
             self.setup_results_widgets()
+            self.setup_dashboard_widgets()
             self.setup_model_profile_widgets()
             self.setup_camera_feed_widget()
             self.setup_camera_source_selector()
@@ -238,11 +280,15 @@ class MainWindow(QMainWindow):
         self.lbl_FPS.setText(fps_text)
         self.lbl_Latency.setText(latency_text)
         self.lbl_Resolution.setText(f"{metrics.width}x{metrics.height}")
+        if self.dashboard_controller is not None:
+            self.dashboard_controller.update_stats(metrics)
 
     def reset_performance_metrics(self):
         self.lbl_FPS.setText("--")
         self.lbl_Latency.setText("--")
         self.lbl_Resolution.setText("--")
+        if self.dashboard_controller is not None:
+            self.dashboard_controller.clear_runtime_stats()
 
     def setup_results_widgets(self):
         self.lbl_Objects = self.ui.findChild(QLabel, "lbl_Objects")
@@ -251,6 +297,29 @@ class MainWindow(QMainWindow):
             raise RuntimeError("Missing UI widgets: lbl_Objects")
 
         self.lbl_Objects.setText("0")
+
+    def setup_dashboard_widgets(
+        self,
+        dashboard_config: dict | None = None,
+        app_config: dict | None = None,
+        model_profile: dict | None = None,
+    ):
+        if self.dashboard_view is not None:
+            try:
+                self.dashboard_view.reset()
+            except RuntimeError:
+                pass
+
+        self.dashboard_view = DashboardView.from_loaded_ui(
+            self.ui,
+            dashboard_config=dashboard_config,
+        )
+        self.dashboard_controller = DashboardController(
+            self.dashboard_view,
+            dashboard_config=dashboard_config,
+            app_config=app_config,
+            model_profile=model_profile,
+        )
 
     def setup_model_profile_widgets(self):
         self.model_profile_labels = {
@@ -462,8 +531,11 @@ class MainWindow(QMainWindow):
         self.lbl_Objects.setText("0")
         self.clear_video_overlays()
         self.reset_model_profile()
+        if self.dashboard_controller is not None:
+            self.dashboard_controller.reset()
 
         if not app_key:
+            self.setup_dashboard_widgets()
             self.set_live_inference_status("Select App", is_live=False)
             return
 
@@ -476,6 +548,11 @@ class MainWindow(QMainWindow):
             return
 
         self.selected_app = app
+        dashboard_config = app.config.get("dashboard", {})
+        self.setup_dashboard_widgets(
+            dashboard_config if isinstance(dashboard_config, dict) else {},
+            app.config,
+        )
 
         try:
             pipeline, analytics = self.create_app_runtime(app)
@@ -494,6 +571,11 @@ class MainWindow(QMainWindow):
 
         self.active_pipeline = pipeline
         self.update_model_profile(pipeline)
+        if self.dashboard_controller is not None:
+            self.dashboard_controller.set_context(
+                app_config=app.config,
+                model_profile=self.pipeline_model_profile(pipeline),
+            )
 
         try:
             self.select_app_default_camera(app)
@@ -639,6 +721,8 @@ class MainWindow(QMainWindow):
         if current_count is None:
             current_count = summary.get("current_people", len(results or []))
         self.lbl_Objects.setText(str(int(current_count)))
+        if self.dashboard_controller is not None:
+            self.dashboard_controller.update_frame_result(results, summary)
         self.update_video_overlays(results, source_size)
 
     @Slot(str, str)
@@ -646,6 +730,8 @@ class MainWindow(QMainWindow):
         self._analytics_enabled = False
         self.lbl_Objects.setText("--")
         self.clear_video_overlays()
+        if self.dashboard_controller is not None:
+            self.dashboard_controller.clear_frame()
         self.show_runtime_error("Analytics Error", message, details)
 
     @Slot(str)

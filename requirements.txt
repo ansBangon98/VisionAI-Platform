@@ -8,3 +8,5 @@ torch
 torchvision
 ultralytics
 albumentations
+cython-bbox
+lap

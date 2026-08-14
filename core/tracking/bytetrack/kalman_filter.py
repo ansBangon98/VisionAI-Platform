@@ -1,5 +1,6 @@
 # vim: expandtab:ts=4:sw=4
 import numpy as np
+import scipy.linalg
 
 
 """
@@ -212,14 +213,11 @@ class KalmanFilter(object):
         """
         projected_mean, projected_cov = self.project(mean, covariance)
 
-        projected_cross_cov = np.dot(covariance, self._update_mat.T)
-        try:
-            kalman_gain = np.linalg.solve(
-                projected_cov,
-                projected_cross_cov.T,
-            ).T
-        except np.linalg.LinAlgError:
-            kalman_gain = np.dot(projected_cross_cov, np.linalg.pinv(projected_cov))
+        chol_factor, lower = scipy.linalg.cho_factor(
+            projected_cov, lower=True, check_finite=False)
+        kalman_gain = scipy.linalg.cho_solve(
+            (chol_factor, lower), np.dot(covariance, self._update_mat.T).T,
+            check_finite=False).T
         innovation = measurement - projected_mean
 
         new_mean = mean + np.dot(innovation, kalman_gain.T)
@@ -263,7 +261,9 @@ class KalmanFilter(object):
             return np.sum(d * d, axis=1)
         elif metric == 'maha':
             cholesky_factor = np.linalg.cholesky(covariance)
-            z = np.linalg.solve(cholesky_factor, d.T)
+            z = scipy.linalg.solve_triangular(
+                cholesky_factor, d.T, lower=True, check_finite=False,
+                overwrite_b=True)
             squared_maha = np.sum(z * z, axis=0)
             return squared_maha
         else:

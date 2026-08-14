@@ -1,31 +1,24 @@
 import numpy as np
-from . import kalman_filter
+import scipy
+import lap
+from scipy.spatial.distance import cdist
 
-try:
-    from scipy.optimize import linear_sum_assignment as scipy_linear_sum_assignment
-except ImportError:  # pragma: no cover - optional dependency.
-    scipy_linear_sum_assignment = None
-
-try:
-    from scipy.spatial.distance import cdist
-except ImportError:  # pragma: no cover - optional dependency.
-    cdist = None
+from cython_bbox import bbox_overlaps as bbox_ious
+from core.tracking.bytetrack import kalman_filter
 
 def merge_matches(m1, m2, shape):
-    O, _P, Q = shape
+    O,P,Q = shape
     m1 = np.asarray(m1)
     m2 = np.asarray(m2)
-    if m1.size == 0 or m2.size == 0:
-        match = []
-    else:
-        m2_by_left = {left: right for left, right in m2}
-        match = [
-            (left, m2_by_left[middle])
-            for left, middle in m1
-            if middle in m2_by_left
-        ]
-    unmatched_O = tuple(set(range(O)) - {i for i, _j in match})
-    unmatched_Q = tuple(set(range(Q)) - {j for _i, j in match})
+
+    M1 = scipy.sparse.coo_matrix((np.ones(len(m1)), (m1[:, 0], m1[:, 1])), shape=(O, P))
+    M2 = scipy.sparse.coo_matrix((np.ones(len(m2)), (m2[:, 0], m2[:, 1])), shape=(P, Q))
+
+    mask = M1*M2
+    match = mask.nonzero()
+    match = list(zip(match[0], match[1]))
+    unmatched_O = tuple(set(range(O)) - set([i for i, j in match]))
+    unmatched_Q = tuple(set(range(Q)) - set([j for i, j in match]))
 
     return match, unmatched_O, unmatched_Q
 
@@ -44,58 +37,15 @@ def _indices_to_matches(cost_matrix, indices, thresh):
 def linear_assignment(cost_matrix, thresh):
     if cost_matrix.size == 0:
         return np.empty((0, 2), dtype=int), tuple(range(cost_matrix.shape[0])), tuple(range(cost_matrix.shape[1]))
-
-    if scipy_linear_sum_assignment is None:
-        return _greedy_assignment(cost_matrix, thresh)
-
-    finite_cost_matrix = np.nan_to_num(
-        cost_matrix,
-        nan=1e6,
-        posinf=1e6,
-        neginf=-1e6,
-    )
-    rows, cols = scipy_linear_sum_assignment(finite_cost_matrix)
-    matches = [
-        [row, col]
-        for row, col in zip(rows, cols)
-        if cost_matrix[row, col] <= thresh
-    ]
-    unmatched_a = tuple(set(range(cost_matrix.shape[0])) - {row for row, _ in matches})
-    unmatched_b = tuple(set(range(cost_matrix.shape[1])) - {col for _, col in matches})
-    matches_array = np.asarray(matches, dtype=int).reshape((-1, 2))
-    return matches_array, np.asarray(unmatched_a), np.asarray(unmatched_b)
-
-
-def _greedy_assignment(cost_matrix, thresh):
-    candidate_rows, candidate_cols = np.where(cost_matrix <= thresh)
-    candidates = sorted(
-        (
-            (float(cost_matrix[row, col]), int(row), int(col))
-            for row, col in zip(candidate_rows, candidate_cols)
-        ),
-        key=lambda item: item[0],
-    )
-
-    matched_rows = set()
-    matched_cols = set()
-    matches = []
-    for _cost, row, col in candidates:
-        if row in matched_rows or col in matched_cols:
-            continue
-        matched_rows.add(row)
-        matched_cols.add(col)
-        matches.append([row, col])
-
-    unmatched_a = np.asarray(
-        sorted(set(range(cost_matrix.shape[0])) - matched_rows),
-        dtype=int,
-    )
-    unmatched_b = np.asarray(
-        sorted(set(range(cost_matrix.shape[1])) - matched_cols),
-        dtype=int,
-    )
-    matches_array = np.asarray(matches, dtype=int).reshape((-1, 2))
-    return matches_array, unmatched_a, unmatched_b
+    matches, unmatched_a, unmatched_b = [], [], []
+    cost, x, y = lap.lapjv(cost_matrix, extend_cost=True, cost_limit=thresh)
+    for ix, mx in enumerate(x):
+        if mx >= 0:
+            matches.append([ix, mx])
+    unmatched_a = np.where(x < 0)[0]
+    unmatched_b = np.where(y < 0)[0]
+    matches = np.asarray(matches)
+    return matches, unmatched_a, unmatched_b
 
 
 def ious(atlbrs, btlbrs):
@@ -110,28 +60,12 @@ def ious(atlbrs, btlbrs):
     if ious.size == 0:
         return ious
 
-    return _bbox_ious(
+    ious = bbox_ious(
         np.ascontiguousarray(atlbrs, dtype=float),
-        np.ascontiguousarray(btlbrs, dtype=float),
+        np.ascontiguousarray(btlbrs, dtype=float)
     )
 
-
-def _bbox_ious(atlbrs, btlbrs):
-    top_left = np.maximum(atlbrs[:, None, :2], btlbrs[None, :, :2])
-    bottom_right = np.minimum(atlbrs[:, None, 2:], btlbrs[None, :, 2:])
-    wh = np.maximum(0.0, bottom_right - top_left)
-    intersection = wh[:, :, 0] * wh[:, :, 1]
-
-    area_a = np.maximum(0.0, atlbrs[:, 2] - atlbrs[:, 0]) * np.maximum(
-        0.0,
-        atlbrs[:, 3] - atlbrs[:, 1],
-    )
-    area_b = np.maximum(0.0, btlbrs[:, 2] - btlbrs[:, 0]) * np.maximum(
-        0.0,
-        btlbrs[:, 3] - btlbrs[:, 1],
-    )
-    union = area_a[:, None] + area_b[None, :] - intersection
-    return intersection / np.maximum(union, 1e-6)
+    return ious
 
 
 def iou_distance(atracks, btracks):
@@ -185,8 +119,6 @@ def embedding_distance(tracks, detections, metric='cosine'):
     cost_matrix = np.zeros((len(tracks), len(detections)), dtype=float)
     if cost_matrix.size == 0:
         return cost_matrix
-    if cdist is None:
-        raise RuntimeError("scipy is required for embedding distance matching.")
     det_features = np.asarray([track.curr_feat for track in detections], dtype=float)
     #for i, track in enumerate(tracks):
         #cost_matrix[i, :] = np.maximum(0.0, cdist(track.smooth_feat.reshape(1,-1), det_features, metric))

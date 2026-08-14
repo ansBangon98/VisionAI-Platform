@@ -25,4 +25,4 @@ deepstream:
   batched_push_timeout: 40000
 
 camera:
-  default_source: video_file_0
+  default_source: video_file_1
