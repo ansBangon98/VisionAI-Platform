@@ -3,7 +3,9 @@ import os
 import sys
 import time
 import traceback
+from dataclasses import replace
 from pathlib import Path
+import numpy as np
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -22,9 +24,10 @@ from core.camera import CameraFactory, CameraRegistry, CameraSourceDefinition
 from core.camera.camera_config import CameraMetrics
 from core.pipelines.cpu.frame_processor import frame_result_to_legacy_objects
 from core.pipelines.cpu.gstreamer_pipeline import attach_camera_viewer
-from core.results.frame_result import FrameResult
+from core.results import FrameResult, SegmentationResult
 from ui.controllers import DashboardController
 from ui.views import DashboardView
+from ui.widgets.vision_view import DualViewWidget
 
 
 try:
@@ -60,8 +63,11 @@ class AnalyticsWorker(QObject):
         frame_result = None
         try:
             frame_result = self.process_frame_result(frame)
-            if frame_result is not None:
+            if isinstance(frame_result, FrameResult):
                 results = frame_result_to_legacy_objects(frame_result)
+                summary = self.analytics.update(frame_result)
+            elif isinstance(frame_result, SegmentationResult):
+                results = frame_result
                 summary = self.analytics.update(frame_result)
             else:
                 results = self.pipeline.process(frame)
@@ -80,15 +86,16 @@ class AnalyticsWorker(QObject):
         finally:
             self.processing_finished.emit()
 
-    def process_frame_result(self, frame: QImage) -> FrameResult | None:
+    def process_frame_result(self, frame: QImage) -> FrameResult | SegmentationResult | None:
         processor = getattr(self.pipeline, "process_frame_result", None)
         if not callable(processor):
             return None
 
         result = processor(frame)
-        if not isinstance(result, FrameResult):
+        if not isinstance(result, (FrameResult, SegmentationResult)):
             raise RuntimeError(
-                f"{self.app_name} returned {type(result).__name__}; expected FrameResult."
+                f"{self.app_name} returned {type(result).__name__}; "
+                "expected FrameResult or SegmentationResult."
             )
         return result
 
@@ -105,11 +112,14 @@ class AnalyticsWorker(QObject):
         self,
         summary: dict,
         results,
-        frame_result: FrameResult | None,
+        frame_result: FrameResult | SegmentationResult | None,
         started_at: float,
     ) -> None:
         processing_ms = (time.perf_counter() - started_at) * 1000.0
-        summary.setdefault("current_objects", len(results or []))
+        if isinstance(results, SegmentationResult):
+            summary.setdefault("current_objects", summary.get("active_class_count", 0))
+        else:
+            summary.setdefault("current_objects", len(results or []))
         summary.setdefault("processing_ms", processing_ms)
 
         if frame_result is None:
@@ -129,6 +139,10 @@ class ObjectCountAnalytics:
     def update(self, results):
         if isinstance(results, FrameResult):
             return {"current_objects": len(results.detections)}
+        if isinstance(results, SegmentationResult):
+            active_classes = np.unique(results.mask)
+            active_classes = active_classes[active_classes != 0]
+            return {"current_objects": len(active_classes)}
         return {"current_objects": len(results)}
 
 
@@ -153,6 +167,8 @@ class MainWindow(QMainWindow):
         self._analytics_worker = None
         self.dashboard_view = None
         self.dashboard_controller = None
+        self.dual_vision_view = None
+        self._dual_vision_enabled = False
 
         self.setWindowTitle("VisionAI-Platform")
         self.setGeometry(100, 100, 1246, 900)
@@ -225,6 +241,9 @@ class MainWindow(QMainWindow):
             self.frm_videofeed,
             auto_start=False,
         )
+        self.dual_vision_view = DualViewWidget(parent=self.frm_videofeed)
+        self.dual_vision_view.hide()
+        self.frm_videofeed.layout().addWidget(self.dual_vision_view)
         self.camera_viewer.metrics_changed.connect(self.update_performance_metrics)
         self.camera_viewer.frame_ready.connect(self.queue_analytics_frame)
         self.camera_viewer.error_occurred.connect(self.handle_camera_error)
@@ -243,12 +262,15 @@ class MainWindow(QMainWindow):
         try:
             camera_config = self.camera_registry.get(source_key)
             camera = CameraFactory.create(camera_config)
+            runtime_config = camera.to_camera_config()
+            if self._dual_vision_enabled:
+                runtime_config = replace(runtime_config, display_sink="fakesink")
         except RuntimeError as error:
             self.show_runtime_error("Camera Config Error", str(error))
             return
 
         try:
-            self.camera_viewer.start(camera.to_camera_config())
+            self.camera_viewer.start(runtime_config)
             self.selected_camera_source = source_key
         except RuntimeError as error:
             self.set_live_inference_status(str(error), is_live=False)
@@ -530,6 +552,7 @@ class MainWindow(QMainWindow):
         self.active_pipeline = None
         self.lbl_Objects.setText("0")
         self.clear_video_overlays()
+        self.configure_video_layout(None)
         self.reset_model_profile()
         if self.dashboard_controller is not None:
             self.dashboard_controller.reset()
@@ -548,6 +571,7 @@ class MainWindow(QMainWindow):
             return
 
         self.selected_app = app
+        self.configure_video_layout(app.config)
         dashboard_config = app.config.get("dashboard", {})
         self.setup_dashboard_widgets(
             dashboard_config if isinstance(dashboard_config, dict) else {},
@@ -718,12 +742,18 @@ class MainWindow(QMainWindow):
     @Slot(object, object, object)
     def update_analytics_results(self, results, summary, source_size=None):
         current_count = summary.get("current_objects")
-        if current_count is None:
+        if current_count is None and isinstance(results, SegmentationResult):
+            current_count = summary.get("active_class_count", 0)
+        elif current_count is None:
             current_count = summary.get("current_people", len(results or []))
         self.lbl_Objects.setText(str(int(current_count)))
         if self.dashboard_controller is not None:
             self.dashboard_controller.update_frame_result(results, summary)
-        self.update_video_overlays(results, source_size)
+        if isinstance(results, SegmentationResult):
+            self.update_segmentation_view(results)
+            self.clear_video_overlays()
+        else:
+            self.update_video_overlays(results, source_size)
 
     @Slot(str, str)
     def handle_analytics_error(self, message: str, details: str = ""):
@@ -732,12 +762,14 @@ class MainWindow(QMainWindow):
         self.clear_video_overlays()
         if self.dashboard_controller is not None:
             self.dashboard_controller.clear_frame()
+        self.clear_vision_view()
         self.show_runtime_error("Analytics Error", message, details)
 
     @Slot(str)
     def handle_camera_error(self, message: str):
         self.reset_performance_metrics()
         self.clear_video_overlays()
+        self.clear_vision_view()
         self.show_runtime_error("Camera Error", message)
 
     @Slot()
@@ -787,6 +819,51 @@ class MainWindow(QMainWindow):
         if not hasattr(self.camera_viewer, "set_overlays"):
             return
         self.camera_viewer.set_overlays(results, source_size)
+
+    def update_segmentation_view(self, result: SegmentationResult):
+        if not self._dual_vision_enabled or self.dual_vision_view is None:
+            return
+        self.dual_vision_view.set_frames(
+            result.original_frame,
+            result.visualization_frame,
+        )
+
+    def configure_video_layout(self, app_config: dict | None):
+        enabled = self._wants_dual_vision_view(app_config)
+        self._dual_vision_enabled = enabled
+
+        if not hasattr(self, "camera_viewer"):
+            return
+        self.camera_viewer.setVisible(not enabled)
+
+        if self.dual_vision_view is None:
+            return
+        self.dual_vision_view.setVisible(enabled)
+        if enabled:
+            self.dual_vision_view.clear()
+
+    def clear_vision_view(self):
+        if self.dual_vision_view is not None:
+            self.dual_vision_view.clear()
+
+    def _wants_dual_vision_view(self, app_config: dict | None) -> bool:
+        if not isinstance(app_config, dict):
+            return False
+
+        application_config = app_config.get("application", {})
+        pipeline = ""
+        if isinstance(application_config, dict):
+            pipeline = str(application_config.get("pipeline", ""))
+
+        display_config = app_config.get("display", {})
+        layout = ""
+        if isinstance(display_config, dict):
+            layout = str(display_config.get("layout", ""))
+
+        return (
+            pipeline.strip().lower() == "segmentation"
+            or layout.strip().lower() in {"dual", "dual_view", "side_by_side"}
+        )
 
     def clear_video_overlays(self):
         if not hasattr(self, "camera_viewer"):

@@ -320,7 +320,7 @@ border:None;</string>
           <rect>
            <x>10</x>
            <y>17</y>
-           <width>521</width>
+           <width>681</width>
            <height>20</height>
           </rect>
          </property>
@@ -335,7 +335,7 @@ border:None;</string>
           <string notr="true">color: #9F9FA9;</string>
          </property>
          <property name="text">
-          <string>Real-time pedestrian detection, tracking and dwell-time analysis across a fixed camera view</string>
+          <string>Real-time computer vision inference, tracking, classification, segmentation, and analytics across multiple AI applications.</string>
          </property>
         </widget>
         <widget class="QLabel" name="project_title_5">
@@ -358,7 +358,7 @@ border:None;</string>
           <string notr="true">color: #9F9FA9;</string>
          </property>
          <property name="text">
-          <string>People Analytics</string>
+          <string>VisionAI Analytics</string>
          </property>
         </widget>
        </widget>
@@ -528,7 +528,7 @@ border:None;</string>
                      <string notr="true">padding-left: 5px;</string>
                     </property>
                     <property name="text">
-                     <string>CAM_01 - Store entrance</string>
+                     <string>CAM_01</string>
                     </property>
                     <property name="margin">
                      <number>0</number>

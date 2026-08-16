@@ -4,9 +4,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from core.results.frame_result import FrameResult
+from core.results.segmentation_result import SegmentationResult
 
 
-ResultCallback = Callable[[FrameResult], None]
+PipelineResult = FrameResult | SegmentationResult
+ResultCallback = Callable[[PipelineResult], None]
 
 
 class BasePipeline(ABC):

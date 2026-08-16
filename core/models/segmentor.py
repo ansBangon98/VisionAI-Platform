@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from core.models.segmentation import (
+    BaseSegmentor,
+    SegFormerSegmentor,
+    available_segmentor_backends,
+    create_segmentation_backend,
+)
 
-
-class BaseSegmentor(ABC):
-    """Common contract for future segmentation models."""
-
-    @abstractmethod
-    def predict(self, frame: object) -> object:
-        """Return a segmentation mask or structured segmentation result."""
-
+__all__ = [
+    "BaseSegmentor",
+    "SegFormerSegmentor",
+    "available_segmentor_backends",
+    "create_segmentation_backend",
+]

@@ -1,0 +1,18 @@
+description: SegFormer-B0 model trained on data.yaml
+name: road_segformer
+task: semantic_segmentation
+architecture: segformer
+
+input:
+  width: 512
+  height: 512
+  channels: 3
+
+classes:
+  0: background
+  1: drivable_fallback
+  2: road
+
+preprocessing:
+  normalize: true
+  processor_config: processor/preprocessor_config.json

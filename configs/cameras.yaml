@@ -78,3 +78,13 @@ sources:
       fps: 30
       width: 640
       height: 0
+  
+  video_road_segmentation:
+    label: Road Segmentation
+    type: file
+    path: /home/ansari/Videos/road_segmentation.mp4
+    display_sink: ximagesink
+    inference:
+      fps: 30
+      width: 640
+      height: 0

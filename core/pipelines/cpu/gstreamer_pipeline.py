@@ -60,6 +60,7 @@ from core.pipelines.cpu.frame_processor import (
     legacy_objects_to_frame_result,
 )
 from core.results.frame_result import FrameResult
+from core.results.segmentation_result import SegmentationResult
 
 
 class CPUGStreamerPipeline(BasePipeline):
@@ -95,7 +96,7 @@ class CPUGStreamerPipeline(BasePipeline):
     def set_result_callback(self, callback: ResultCallback) -> None:
         self._result_callback = callback
 
-    def process_frame_result(self, frame: object) -> FrameResult:
+    def process_frame_result(self, frame: object) -> FrameResult | SegmentationResult:
         if self.frame_processor is None:
             raise RuntimeError(
                 "CPU GStreamer pipeline has no frame processor. Attach an "
@@ -119,17 +120,20 @@ class CPUGStreamerPipeline(BasePipeline):
                 frame_number=self._next_frame_number(),
             )
 
-        if not isinstance(result, FrameResult):
+        if not isinstance(result, (FrameResult, SegmentationResult)):
             raise RuntimeError(
                 "CPU GStreamer frame processor returned an unsupported result. "
-                "Expected FrameResult."
+                "Expected FrameResult or SegmentationResult."
             )
 
         self._emit_result(result)
         return result
 
     def process(self, frame: object) -> list[dict[str, object]]:
-        return frame_result_to_legacy_objects(self.process_frame_result(frame))
+        result = self.process_frame_result(frame)
+        if isinstance(result, FrameResult):
+            return frame_result_to_legacy_objects(result)
+        return []
 
     def model_profile(self) -> dict[str, object]:
         profile_getter = getattr(self.frame_processor, "model_profile", None)
@@ -151,7 +155,7 @@ class CPUGStreamerPipeline(BasePipeline):
         self._frame_number += 1
         return self._frame_number
 
-    def _emit_result(self, result: FrameResult) -> None:
+    def _emit_result(self, result: FrameResult | SegmentationResult) -> None:
         if self._result_callback is not None:
             self._result_callback(result)
 
@@ -643,6 +647,7 @@ class GStreamerCamera(QObject):
         values = [
             "video/x-raw",
             "format=RGB",
+            "pixel-aspect-ratio=1/1",
             f"framerate={max(1, int(self.config.inference_fps))}/1",
         ]
         if self.config.inference_width > 0:

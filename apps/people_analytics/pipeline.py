@@ -89,26 +89,59 @@ def _normalize_shape(shape: Sequence[int] | str | object) -> tuple[int, ...]:
     return ()
 
 
+def _normalize_size_pair(value: object) -> tuple[int, int]:
+    if isinstance(value, str):
+        parts = [
+            int(part.strip())
+            for part in value.replace("x", ",").replace("X", ",").split(",")
+            if part.strip()
+        ]
+    elif isinstance(value, Sequence):
+        parts = [int(part) for part in value]
+    else:
+        parts = [int(value)]
+
+    if not parts:
+        return (640, 640)
+    if len(parts) == 1:
+        return (parts[0], parts[0])
+    return (parts[0], parts[1])
+
+
 def _detector_backend_options(config: dict[str, Any]) -> dict[str, Any]:
     reserved_keys = {
+        "artifacts",
         "backend",
+        "base_model",
+        "bbox_format",
+        "classes",
         "confidence_threshold",
         "device",
+        "detect_class_ids",
         "dynamic_dim",
+        "end2end",
+        "face_class_ids",
+        "family",
+        "input",
         "input_dtypes",
         "input_shape",
         "input_shapes",
         "input_size",
+        "iou_threshold",
+        "labels",
         "model",
         "model_type",
         "name",
+        "names",
         "nms_iou_threshold",
-        "task",
-        "detect_class_ids",
-        "face_class_ids",
+        "output",
+        "output_format",
         "people_class_ids",
+        "preprocessing",
         "provider",
         "providers",
+        "task",
+        "version",
         "warmup_runs",
     }
     return {
@@ -116,6 +149,60 @@ def _detector_backend_options(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in config.items()
         if key not in reserved_keys
     }
+
+
+def _detector_confidence_threshold(config: Mapping[str, Any]) -> float:
+    return float(config.get("confidence_threshold", 0.4))
+
+
+def _detector_iou_threshold(config: Mapping[str, Any]) -> float:
+    return float(config.get("nms_iou_threshold", config.get("iou_threshold", 0.45)))
+
+
+def _detector_input_size(config: Mapping[str, Any]) -> Sequence[int]:
+    input_size = config.get("input_size")
+    if input_size:
+        return _normalize_size_pair(input_size)
+
+    input_config = config.get("input")
+    if isinstance(input_config, Mapping):
+        width = input_config.get("width")
+        height = input_config.get("height")
+        if width and height:
+            return (int(width), int(height))
+
+    imgsz = config.get("imgsz")
+    if imgsz:
+        return _normalize_size_pair(imgsz)
+
+    return (640, 640)
+
+
+def _detector_output_format(config: Mapping[str, Any]) -> str | None:
+    output_config = config.get("output")
+    if isinstance(output_config, Mapping) and output_config.get("format"):
+        return str(output_config["format"])
+    value = config.get("output_format")
+    return str(value) if value else None
+
+
+def _detector_bbox_format(config: Mapping[str, Any]) -> str | None:
+    output_config = config.get("output")
+    if isinstance(output_config, Mapping) and output_config.get("bbox_format"):
+        return str(output_config["bbox_format"])
+    value = config.get("bbox_format")
+    return str(value) if value else None
+
+
+def _detector_end2end(config: Mapping[str, Any]) -> object:
+    if "end2end" in config:
+        return config["end2end"]
+
+    output_config = config.get("output")
+    if isinstance(output_config, Mapping) and "end2end" in output_config:
+        return output_config["end2end"]
+
+    return None
 
 
 class ByteTrackPeopleTracker:
@@ -329,11 +416,14 @@ def create_pipeline_from_config(
         warmup_runs=detector_config.get("warmup_runs", 0),
         dynamic_dim=detector_config.get("dynamic_dim", 1),
         backend_options=_detector_backend_options(detector_config),
-        confidence_threshold=detector_config.get("confidence_threshold", 0.4),
-        nms_iou_threshold=detector_config.get("nms_iou_threshold", 0.45),
-        input_size=detector_config.get("input_size", (640, 640)),
+        confidence_threshold=_detector_confidence_threshold(detector_config),
+        nms_iou_threshold=_detector_iou_threshold(detector_config),
+        input_size=_detector_input_size(detector_config),
         people_class_ids=people_class_ids,
         class_ids=detect_class_ids,
+        output_format=_detector_output_format(detector_config),
+        bbox_format=_detector_bbox_format(detector_config),
+        end2end=_detector_end2end(detector_config),
     )
     tracker = ByteTrackPeopleTracker(
         track_thresh=tracker_config.get("track_thresh", 0.5),

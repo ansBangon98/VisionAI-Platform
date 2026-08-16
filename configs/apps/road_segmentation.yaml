@@ -1,17 +1,84 @@
 application:
   name: Road Segmentation
   pipeline: segmentation
-  enabled: false
 
 source:
-  name: parking_area
+  name: video_road_segmentation
 
 primary_model:
-  name: road_segmentation
-  task: segmentation
-  model: models/segmentation/road/model.onnx
-  backend: onnxruntime
-  device: auto
+  name: road_segformer
+  task: semantic_segmentation
+  model: models/segmentation/road_segformer/openvino/model.xml
+  backend: openvino
+  device: CPU
   providers: []
-  input_size: [640, 640]
-  input_shape: [1, 3, 640, 640]
+  performance_hint: LATENCY
+  input_size: [512, 512]
+  input_shape: [1, 3, 512, 512]
+
+  classes:
+    0: background
+    1: drivable_fallback
+    2: road
+
+  preprocessing:
+    normalize: true
+    processor_config: processor/preprocessor_config.json
+
+display:
+  layout: side_by_side
+
+  original:
+    enabled: true
+
+  segmentation:
+    enabled: true
+    mode: mask
+
+  overlay:
+    enabled: false
+    alpha: 0.45
+
+dashboard:
+  analytics_summary:
+    enabled: true
+    metrics:
+      - key: active_class_count
+        label: Active classes
+        type: progress
+        max: 2
+        color: "#69c29b"
+        format: count
+      - key: road_coverage_pct
+        label: Road coverage
+        type: progress
+        max: 100
+        color: "#22c55e"
+        format: percent
+      - key: drivable_coverage_pct
+        label: Drivable coverage
+        type: progress
+        max: 100
+        color: "#f59e0b"
+        format: percent
+      - key: dominant_class
+        label: Dominant class
+        type: text
+
+  event_history:
+    enabled: false
+
+  detection_results:
+    enabled: false
+
+  session_stats:
+    enabled: true
+    metrics:
+      - fps
+      - inference_ms
+      - frames_processed
+      - session_duration
+      - model
+      - backend
+      - device
+      - input

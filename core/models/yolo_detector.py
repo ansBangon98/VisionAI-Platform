@@ -20,6 +20,15 @@ from core.loaders.onnx_loader import OnnxModelLoader
 from core.loaders.openvino_loader import OpenVinoModelLoader
 from core.loaders.pytorch_loader import PyTorchModelLoader
 from core.loaders.tensorrt_loader import TensorRtModelLoader
+from core.models.detection.postprocess import (
+    PostprocessContext,
+    create_yolo_postprocessor,
+)
+from core.models.detection.postprocess.base_postprocessor import (
+    normalize_bbox_format,
+    normalize_output_format,
+    parse_optional_bool,
+)
 from core.models.base_detector import BaseDetector, Detection
 
 try:
@@ -80,17 +89,36 @@ class YoloDetector(BaseDetector):
         input_size: Sequence[int] = (640, 640),
         people_class_ids: Sequence[int] = (),
         class_ids: Sequence[int] | None = None,
+        output_format: str | None = None,
+        bbox_format: str | None = None,
+        end2end: bool | str | int | None = None,
     ):
         del people_class_ids
         self.model_path = Path(model_path)
+        self.sidecar_metadata = _load_model_sidecar_metadata(self.model_path)
         self.confidence_threshold = float(confidence_threshold)
         self.nms_iou_threshold = float(nms_iou_threshold)
         self.input_width = int(input_size[0])
         self.input_height = int(input_size[1])
+        self.output_format = normalize_output_format(
+            output_format or _metadata_output_format(self.sidecar_metadata)
+        )
+        self.bbox_format = normalize_bbox_format(
+            bbox_format or _metadata_bbox_format(self.sidecar_metadata)
+        )
+        self.end2end = _resolve_end2end(end2end, self.sidecar_metadata)
         self.class_ids = (
             {int(class_id) for class_id in class_ids}
             if class_ids is not None
             else set()
+        )
+        self.postprocessor = create_yolo_postprocessor(
+            output_format=self.output_format,
+            bbox_format=self.bbox_format,
+            end2end=self.end2end,
+            confidence_threshold=self.confidence_threshold,
+            nms_iou_threshold=self.nms_iou_threshold,
+            class_ids=self.class_ids,
         )
 
         self.backend_name = _normalize_backend_name(backend_name)
@@ -125,9 +153,8 @@ class YoloDetector(BaseDetector):
         self.input_name = self.backend.input_specs[0].name
 
     def model_profile(self) -> dict[str, object]:
-        sidecar_metadata = _load_model_sidecar_metadata(self.model_path)
         return {
-            "base_model": _profile_base_model(self.model_path, sidecar_metadata),
+            "base_model": _profile_base_model(self.model_path, self.sidecar_metadata),
             "framework": _profile_framework_name(self.backend_name, self.backend),
             "device": _profile_device_name(self.backend),
             "model_input_size": f"{self.input_width}x{self.input_height}",
@@ -137,6 +164,14 @@ class YoloDetector(BaseDetector):
 
     def set_confidence_threshold(self, confidence_threshold: float) -> None:
         self.confidence_threshold = max(0.0, min(1.0, float(confidence_threshold)))
+        self.postprocessor = create_yolo_postprocessor(
+            output_format=self.output_format,
+            bbox_format=self.bbox_format,
+            end2end=self.end2end,
+            confidence_threshold=self.confidence_threshold,
+            nms_iou_threshold=self.nms_iou_threshold,
+            class_ids=self.class_ids,
+        )
 
     def predict(self, frame: object) -> list[Detection]:
         try:
@@ -160,7 +195,7 @@ class YoloDetector(BaseDetector):
                 f"backend='{self.backend_name}', model='{self.model_path}'."
             )
 
-        output = next(iter(outputs.values()))
+        output = self._select_output(outputs)
         try:
             return self._postprocess(
                 output,
@@ -223,75 +258,19 @@ class YoloDetector(BaseDetector):
         frame_width: int,
         frame_height: int,
     ) -> list[Detection]:
-        predictions = np.asarray(output)
-        if predictions.size == 0:
-            raise RuntimeError("Detector output tensor is empty.")
+        return self.postprocessor.process(
+            output,
+            PostprocessContext(
+                scale,
+                pad_x,
+                pad_y,
+                frame_width,
+                frame_height,
+            ),
+        )
 
-        if predictions.ndim == 3:
-            if predictions.shape[0] != 1:
-                raise RuntimeError(
-                    "Detector output tensor has unsupported batch size "
-                    f"{predictions.shape[0]}; expected 1. Shape: {predictions.shape}."
-                )
-            predictions = predictions[0]
-        if predictions.ndim != 2:
-            raise RuntimeError(
-                "Detector output tensor has unsupported rank "
-                f"{predictions.ndim}; expected 2 or 3. Shape: {predictions.shape}."
-            )
-
-        if predictions.shape[0] < predictions.shape[1]:
-            predictions = predictions.T
-        if predictions.shape[1] < 5:
-            raise RuntimeError(
-                "Detector output tensor has too few columns. Expected at least "
-                f"5 values per prediction (x, y, w, h, score/classes); "
-                f"got shape {predictions.shape}."
-            )
-
-        boxes_xywh = predictions[:, :4]
-        if predictions.shape[1] == 5:
-            scores = predictions[:, 4]
-            class_ids = np.zeros_like(scores, dtype=np.int64)
-        else:
-            class_scores = predictions[:, 4:]
-            scores = class_scores.max(axis=1)
-            class_ids = class_scores.argmax(axis=1)
-
-        keep = scores >= self.confidence_threshold
-        if self.class_ids:
-            keep = keep & np.isin(class_ids, list(self.class_ids))
-
-        if not np.any(keep):
-            return []
-
-        boxes_xywh = boxes_xywh[keep]
-        scores = scores[keep]
-        class_ids = class_ids[keep]
-
-        boxes = _xywh_to_xyxy(boxes_xywh)
-        boxes[:, [0, 2]] = (boxes[:, [0, 2]] - pad_x) / scale
-        boxes[:, [1, 3]] = (boxes[:, [1, 3]] - pad_y) / scale
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, frame_width)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, frame_height)
-
-        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
-        if not np.any(valid):
-            return []
-
-        boxes = boxes[valid]
-        scores = scores[valid]
-        class_ids = class_ids[valid]
-
-        selected = _nms_by_class(boxes, scores, class_ids, self.nms_iou_threshold)
-        return [
-            Detection(
-                bbox=tuple(float(value) for value in boxes[index]),
-                score=float(scores[index]),
-                class_id=int(class_ids[index]),
-            )
-            for index in selected
-        ]
+    def _select_output(self, outputs: Mapping[str, object]) -> object:
+        return self.postprocessor.select_output(outputs)
 
 
 YoloPeopleDetector = YoloDetector
@@ -659,6 +638,52 @@ def _xml_local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def _metadata_output_format(metadata: Mapping[str, Any]) -> str:
+    output = metadata.get("output")
+    if isinstance(output, Mapping):
+        value = output.get("format")
+        if value:
+            return str(value)
+
+    for key in ("output_format", "format"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _metadata_bbox_format(metadata: Mapping[str, Any]) -> str:
+    output = metadata.get("output")
+    if isinstance(output, Mapping):
+        value = output.get("bbox_format")
+        if value:
+            return str(value)
+
+    for key in ("bbox_format", "box_format"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _resolve_end2end(
+    configured_value: bool | str | int | None,
+    metadata: Mapping[str, Any],
+) -> bool | None:
+    parsed = parse_optional_bool(configured_value)
+    if parsed is not None:
+        return parsed
+
+    for source in (metadata, metadata.get("export")):
+        if not isinstance(source, Mapping) or "end2end" not in source:
+            continue
+        parsed = parse_optional_bool(source.get("end2end"))
+        if parsed is not None:
+            return parsed
+
+    return None
+
+
 def _qimage_to_rgb_array(image: QImage) -> np.ndarray:
     rgb_image = image.convertToFormat(QImage.Format.Format_RGB888)
     width = rgb_image.width()
@@ -728,62 +753,3 @@ def _resize_array(image: np.ndarray, width: int, height: int) -> np.ndarray:
         return image[y_indices[:, None], x_indices]
 
     return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
-
-
-def _xywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
-    converted = boxes.astype(np.float32, copy=True)
-    converted[:, 0] = boxes[:, 0] - boxes[:, 2] / 2
-    converted[:, 1] = boxes[:, 1] - boxes[:, 3] / 2
-    converted[:, 2] = boxes[:, 0] + boxes[:, 2] / 2
-    converted[:, 3] = boxes[:, 1] + boxes[:, 3] / 2
-    return converted
-
-
-def _nms(boxes: np.ndarray, scores: np.ndarray, threshold: float) -> list[int]:
-    if boxes.size == 0:
-        return []
-
-    order = scores.argsort()[::-1]
-    keep: list[int] = []
-
-    while order.size > 0:
-        current = int(order[0])
-        keep.append(current)
-        if order.size == 1:
-            break
-
-        ious = _box_iou(boxes[current], boxes[order[1:]])
-        order = order[1:][ious <= threshold]
-
-    return keep
-
-
-def _nms_by_class(
-    boxes: np.ndarray,
-    scores: np.ndarray,
-    class_ids: np.ndarray,
-    threshold: float,
-) -> list[int]:
-    selected: list[int] = []
-    for class_id in np.unique(class_ids):
-        class_indexes = np.where(class_ids == class_id)[0]
-        kept_indexes = _nms(boxes[class_indexes], scores[class_indexes], threshold)
-        selected.extend(int(class_indexes[index]) for index in kept_indexes)
-
-    return sorted(selected, key=lambda index: float(scores[index]), reverse=True)
-
-
-def _box_iou(box: np.ndarray, boxes: np.ndarray) -> np.ndarray:
-    x1 = np.maximum(box[0], boxes[:, 0])
-    y1 = np.maximum(box[1], boxes[:, 1])
-    x2 = np.minimum(box[2], boxes[:, 2])
-    y2 = np.minimum(box[3], boxes[:, 3])
-
-    intersection = np.maximum(0.0, x2 - x1) * np.maximum(0.0, y2 - y1)
-    box_area = max(0.0, float((box[2] - box[0]) * (box[3] - box[1])))
-    boxes_area = np.maximum(0.0, boxes[:, 2] - boxes[:, 0]) * np.maximum(
-        0.0,
-        boxes[:, 3] - boxes[:, 1],
-    )
-    union = box_area + boxes_area - intersection
-    return intersection / np.maximum(union, 1e-6)

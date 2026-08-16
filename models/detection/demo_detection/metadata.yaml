@@ -1,60 +1,32 @@
-name: demo_object_detector
-task: detection
-model_type: yolo
-base_model: yolo11n
-version: demo_detection_v1
-
-artifacts:
-  pytorch: model.pt
-  onnx: model.onnx
-  openvino_xml: model.xml
-  openvino_bin: model.bin
-  labels: labels.txt
-
-input:
-  width: 640
-  height: 640
-  channels: 3
-  color_format: RGB
-
-preprocessing:
-  resize: letterbox
-  normalization: scale_0_1
-
-classes: [Fudgee Barr, Mouse, Remote, Screwdriver, Phone Toy, Guitar, Electric fan, Toy car, Cap]
-
-confidence_threshold: 0.4
-iou_threshold: 0.45
-
-output:
-  format: ultralytics_yolo
-  bbox_format: xywh_center
-
-export:
-  exporter: Ultralytics
-  date: '2026-08-08T04:31:11.545044+00:00'
-  ultralytics_version: 8.4.116
-  license: AGPL-3.0 License (https://ultralytics.com/license)
-  docs: https://docs.ultralytics.com
-  stride: 32
-  head: Detect
+description: Ultralytics YOLO11n model trained on data.yaml
+author: Ultralytics
+date: '2026-08-08T04:31:11.545044+00:00'
+version: 8.4.116
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+head: Detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: Fudgee Barr
+  1: Mouse
+  2: Remote
+  3: Screwdriver
+  4: Phone Toy
+  5: Guitar
+  6: Electric fan
+  7: Toy car
+  8: Cap
+args:
+  data: null
   batch: 1
-  imgsz: [640, 640]
-  names:
-    0: Fudgee Barr
-    1: Mouse
-    2: Remote
-    3: Screwdriver
-    4: Phone Toy
-    5: Guitar
-    6: Electric fan
-    7: Toy car
-    8: Cap
-  args:
-    data: null
-    batch: 1
-    fraction: 1.0
-    quantize: 16
-    dynamic: false
-    nms: false
-  end2end: false
+  fraction: 1.0
+  quantize: 16
+  dynamic: false
+  nms: false
+channels: 3
+end2end: false

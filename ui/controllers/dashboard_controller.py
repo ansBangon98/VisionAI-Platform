@@ -353,6 +353,8 @@ def _mapping(value: Mapping[str, object] | object | None) -> dict[str, object]:
 def _result_detections(results: Sequence[object] | object | None) -> list[object]:
     if results is None:
         return []
+    if hasattr(results, "mask") and hasattr(results, "original_frame"):
+        return []
     detections = getattr(results, "detections", None)
     if detections is not None:
         return list(detections)
